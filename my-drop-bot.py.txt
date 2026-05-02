@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import asyncio
 import http.server
@@ -6,62 +7,69 @@ import socketserver
 import threading
 import os
 
-# --- חלק 1: השרת שמרצה את RENDER (כדי שיהיה בחינם) ---
+# --- חלק 1: שרת למניעת קריסה ב-Render (חינם) ---
 def run_on_render():
     PORT = int(os.environ.get("PORT", 8080))
     handler = http.server.SimpleHTTPRequestHandler
     with socketserver.TCPServer(("", PORT), handler) as httpd:
-        print(f"✅ Render server serving at port {PORT}")
+        print(f"✅ Render server active on port {PORT}")
         httpd.serve_forever()
 
 threading.Thread(target=run_on_render, daemon=True).start()
 
-# --- חלק 2: הבוט של דיסקורד עם פקודות מהסרטון ---
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+# --- חלק 2: הגדרות הבוט ופקודות סלאש ---
+class MyBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.members = True 
+        intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents)
 
+    async def setup_hook(self):
+        await self.tree.sync()
+        print(f"✅ Slash commands synced!")
+
+bot = MyBot()
 user_credits = {}
-admin_ids = [1234567890] # תחליף את המספר הזה ב-ID שלך בדיסקורד!
 
-@bot.event
-async def on_ready():
-    print(f'🚀 Bot {bot.user.name} is ONLINE!')
+# שם הרול מהתמונה שלך
+ADMIN_ROLE_NAME = "Owner" 
 
-@bot.command()
-async def setup(ctx):
+@bot.tree.command(name="setup", description="הצגת תפריט הבוט")
+async def setup(interaction: discord.Interaction):
     embed = discord.Embed(title="🚀 SMS Bomber Cloud V6", color=0xff0000)
-    embed.add_field(name="פקודות", value="`!bomb [phone]` - התחלת הפצצה\n`!credits` - בדיקת יתרה", inline=False)
-    await ctx.send(embed=embed)
+    embed.add_field(name="שימוש", value="`/bomb` - שליחת הודעות\n`/credits` - בדיקת יתרה", inline=False)
+    await interaction.response.send_message(embed=embed)
 
-@bot.command()
-async def credits(ctx):
-    balance = user_credits.get(ctx.author.id, 0)
-    await ctx.send(f"💰 {ctx.author.name}, יש לך {balance} קרדיטים.")
-
-@bot.command()
-async def add_credits(ctx, member: discord.Member, amount: int):
-    if ctx.author.id in admin_ids:
-        user_credits[member.id] = user_credits.get(member.id, 0) + amount
-        await ctx.send(f"✅ נוספו {amount} קרדיטים ל-{member.display_name}.")
-    else:
-        await ctx.send("❌ אתה לא אדמין!")
-
-@bot.command()
-async def bomb(ctx, phone: str):
-    balance = user_credits.get(ctx.author.id, 0)
-    if balance <= 0:
-        await ctx.send("❌ אין לך קרדיטים!")
+@bot.tree.command(name="add_credits", description="הוספת קרדיטים (לבעלי רול Owner בלבד)")
+@app_commands.describe(member="המשתמש שיקבל קרדיטים", amount="כמות קרדיטים")
+async def add_credits(interaction: discord.Interaction, member: discord.Member, amount: int):
+    # בדיקה אם למשתמש יש רול בשם Owner
+    if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
+        await interaction.response.send_message(f"❌ רק לבעלי רול **{ADMIN_ROLE_NAME}** מותר לחלק קרדיטים!", ephemeral=True)
         return
     
-    await ctx.send(f"💣 מתחיל מתקפה על {phone}...")
-    user_credits[ctx.author.id] -= 1
-    await asyncio.sleep(5)
-    await ctx.send(f"✅ הסתיים! נשאר לך {user_credits[ctx.author.id]} קרדיטים.")
+    user_credits[member.id] = user_credits.get(member.id, 0) + amount
+    await interaction.response.send_message(f"✅ נוספו {amount} קרדיטים ל-{member.display_name}. (יתרה: {user_credits[member.id]})")
 
-# משיכת הטוקן מהגדרות Render
+@bot.tree.command(name="credits", description="בדיקת יתרת הקרדיטים שלך")
+async def credits(interaction: discord.Interaction):
+    balance = user_credits.get(interaction.user.id, 0)
+    await interaction.response.send_message(f"💰 היתרה שלך היא: {balance} קרדיטים.", ephemeral=True)
+
+@bot.tree.command(name="bomb", description="הפעלת הפצצת SMS")
+@app_commands.describe(phone="מספר טלפון")
+async def bomb(interaction: discord.Interaction, phone: str):
+    balance = user_credits.get(interaction.user.id, 0)
+    if balance <= 0:
+        await interaction.response.send_message("❌ אין לך קרדיטים! פנה למנהל לקנייה.", ephemeral=True)
+        return
+    
+    await interaction.response.send_message(f"💣 מתחיל מתקפה על {phone}...")
+    user_credits[interaction.user.id] -= 1
+    await asyncio.sleep(5)
+    await interaction.followup.send(f"✅ המתקפה על {phone} הסתיימה בהצלחה!")
+
+# הרצה עם הטוקן מ-Render
 token = os.environ.get("DISCORD_TOKEN")
-if token:
-    bot.run(token)
-else:
-    print("❌ ERROR: No DISCORD_TOKEN found in Environment Variables!")
+bot.run(token)
