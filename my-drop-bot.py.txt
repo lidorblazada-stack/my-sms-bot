@@ -7,7 +7,7 @@ import http.server
 import socketserver
 import threading
 
-# --- שרת פנימי למניעת קריסה ב-Render ---
+# --- שרת פנימי לשמירה על הבוט ב-Render ---
 def run_on_render():
     PORT = int(os.environ.get("PORT", 8080))
     handler = http.server.SimpleHTTPRequestHandler
@@ -20,81 +20,92 @@ class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True
+        intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
         await self.tree.sync()
+        print(f"✅ כל הפקודות והכפתורים סונכרנו!")
 
 bot = MyBot()
 user_credits = {}
 lifetime_users = set()
-ADMIN_ROLE_NAME = "Owner" # הרול עם הכתר שלך
+ADMIN_ROLE_NAME = "Owner" # השם המדויק של הרול שלך
 
-# --- הגדרת הכפתורים (Buttons) ---
-class ControlPanel(discord.ui.View):
+# --- הגדרת לוח הבקרה עם כפתורים (Control Panel) ---
+class ControlPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="🚀 Spam Phone", style=discord.ButtonStyle.primary, custom_id="spam_btn")
-    async def spam_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("להפעלת הפצצה תשתמש בפקודה: `/bomb`", ephemeral=True)
+    async def spam_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("להפעלת הפצצה, השתמש בפקודה: `/bomb`", ephemeral=True)
 
     @discord.ui.button(label="💰 My Credits", style=discord.ButtonStyle.secondary, custom_id="credits_btn")
-    async def credits_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def credits_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id in lifetime_users:
             await interaction.response.send_message("💰 יתרה: **Unlimited (Lifetime) ♾️**", ephemeral=True)
         else:
             balance = user_credits.get(interaction.user.id, 0)
             await interaction.response.send_message(f"💰 יתרה נוכחית: **{balance}** קרדיטים.", ephemeral=True)
 
-# --- פקודות ---
+# --- פקודות משתמש וניהול ---
 
-@bot.tree.command(name="setup", description="הצגת לוח הבקרה המעוצב")
+@bot.tree.command(name="setup", description="הצגת לוח הבקרה של Spam SMS Bomber")
 async def setup(interaction: discord.Interaction):
     embed = discord.Embed(
         title="Spam sms bomber | By Nehoray yosef Lidor belazada",
         description="Use the buttons below to interact with the bot.\nFor more info go to <#1309605809804869662>",
-        color=0x5865F2
+        color=0x2f3136
     )
     embed.add_field(name="💣 Spam Phone", value="Sending SMS & Call & Whatsapp (costs credits)", inline=False)
     embed.add_field(name="💰 My Credits", value="Check your balance", inline=False)
+    embed.set_footer(text="Premium SMS Bomber Service")
     
-    view = ControlPanel()
+    view = ControlPanelView()
     await interaction.response.send_message(embed=embed, view=view)
 
-@bot.tree.command(name="bomb", description="הפעלת הפצצה")
+@bot.tree.command(name="bomb", description="הפעלת הפצצת SMS")
 async def bomb(interaction: discord.Interaction, phone: str):
     is_lifetime = interaction.user.id in lifetime_users
     balance = user_credits.get(interaction.user.id, 0)
     
     if not is_lifetime and balance <= 0:
-        await interaction.response.send_message("❌ אין לך קרדיטים!", ephemeral=True)
+        await interaction.response.send_message("❌ אין לך קרדיטים! פנה למנהל.", ephemeral=True)
         return
     
-    await interaction.response.send_message(f"💣 מתחיל הפצצה על {phone}...")
+    await interaction.response.send_message(f"💣 מתחיל הפצצה על **{phone}**...")
     if not is_lifetime:
         user_credits[interaction.user.id] -= 1
+    
     await asyncio.sleep(5)
-    await interaction.followup.send(f"✅ ההפצצה על {phone} הסתיימה!")
+    await interaction.followup.send(f"✅ ההפצצה על {phone} הסתיימה בהצלחה!")
 
-# --- פקודות אדמין (Owner בלבד) ---
-
-@bot.tree.command(name="add_credits", description="הוספת קרדיטים (אדמין בלבד)")
+@bot.tree.command(name="add_credits", description="[Owner] הוספת קרדיטים למשתמש")
 async def add_credits(interaction: discord.Interaction, member: discord.Member, amount: int):
     if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
-        await interaction.response.send_message("❌ אין לך הרשאה!", ephemeral=True)
+        await interaction.response.send_message("❌ אין לך הרשאה! פקודה זו לבעלי רול Owner בלבד.", ephemeral=True)
         return
     user_credits[member.id] = user_credits.get(member.id, 0) + amount
     await interaction.response.send_message(f"✅ נוספו {amount} קרדיטים ל-{member.mention}.")
 
-@bot.tree.command(name="set_lifetime", description="הגדרת לייפטיים (אדמין בלבד)")
+@bot.tree.command(name="set_lifetime", description="[Owner] הגדרת סטטוס Lifetime למשתמש")
 async def set_lifetime(interaction: discord.Interaction, member: discord.Member, status: bool):
     if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
-        await interaction.response.send_message("❌ אין לך הרשאה!", ephemeral=True)
+        await interaction.response.send_message("❌ אין לך הרשאה! פקודה זו לבעלי רול Owner בלבד.", ephemeral=True)
         return
-    if status: lifetime_users.add(member.id)
-    else: lifetime_users.discard(member.id)
-    await interaction.response.send_message(f"♾️ סטטוס לייפטיים עודכן ל-{member.mention}.")
+    if status:
+        lifetime_users.add(member.id)
+        await interaction.response.send_message(f"♾️ {member.mention} הוגדר כ-**Lifetime**!")
+    else:
+        lifetime_users.discard(member.id)
+        await interaction.response.send_message(f"❌ סטטוס Lifetime הוסר מ-{member.mention}.")
+
+@bot.tree.command(name="layfight", description="בדיקת סטטוס מערכת")
+async def layfight(interaction: discord.Interaction):
+    embed = discord.Embed(title="⚔️ LAYFIGHT STATUS ⚔️", color=0xFF00FF)
+    embed.add_field(name="מצב", value="✅ **READY TO FIGHT**", inline=False)
+    await interaction.response.send_message(embed=embed)
 
 token = os.environ.get("DISCORD_TOKEN")
 bot.run(token)
