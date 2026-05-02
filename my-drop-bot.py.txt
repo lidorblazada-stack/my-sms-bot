@@ -8,14 +8,13 @@ import http.server
 import socketserver
 import threading
 
-# --- פונקציות לשמירה וטעינה של קרדיטים מקובץ ---
+# --- ניהול מסד נתונים פשוט ---
 DB_FILE = "credits_db.json"
 
 def load_data():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "r") as f:
             data = json.load(f)
-            # הפיכת מפתחות ה-ID חזרה למספרים
             credits = {int(k): v for k, v in data.get("credits", {}).items()}
             lifetime = set(data.get("lifetime", []))
             return credits, lifetime
@@ -23,12 +22,8 @@ def load_data():
 
 def save_data(credits, lifetime):
     with open(DB_FILE, "w") as f:
-        json.dump({
-            "credits": credits,
-            "lifetime": list(lifetime)
-        }, f)
+        json.dump({"credits": credits, "lifetime": list(lifetime)}, f)
 
-# טעינת הנתונים בהפעלת הבוט
 user_credits, lifetime_users = load_data()
 
 # --- שרת פנימי ל-Render ---
@@ -43,22 +38,21 @@ class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True
-        intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
     async def setup_hook(self):
         await self.tree.sync()
 
 bot = MyBot()
-ADMIN_ROLE_NAME = "Owner" 
+ADMIN_ROLE_NAME = "Owner" # שם הרול המורשה
 
+# --- Modal (החלון הקופץ) ---
 class SpamModal(discord.ui.Modal, title='Spam-Me Spam Control'):
     phone = discord.ui.TextInput(label='Phone Number', placeholder='05XXXXXXXX', required=True)
-    credits = discord.ui.TextInput(label='Credits to use', placeholder='1 Credit = 35 seconds', required=True)
+    credits_to_use = discord.ui.TextInput(label='Credits to use', placeholder='1 Credit = 35 seconds', required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            amount = int(self.credits.value)
-            phone_num = self.phone.value
+            amount = int(self.credits_to_use.value)
             total_seconds = amount * 35
             
             is_lifetime = interaction.user.id in lifetime_users
@@ -68,19 +62,18 @@ class SpamModal(discord.ui.Modal, title='Spam-Me Spam Control'):
                 await interaction.response.send_message(f"❌ אין לך מספיק קרדיטים! (יתרה: {balance})", ephemeral=True)
                 return
 
-            # הורדת הקרדיטים ושמירה מיידית
             if not is_lifetime:
                 user_credits[interaction.user.id] -= amount
-                save_data(user_credits, lifetime_users) # שמירה לקובץ
+                save_data(user_credits, lifetime_users)
             
-            await interaction.response.send_message(f"💣 מתחיל הפצצה על **{phone_num}** למשך **{total_seconds}** שניות ({amount} קרדיטים)...")
-            
+            await interaction.response.send_message(f"💣 הפצצה על **{self.phone.value}** החלה! משך: **{total_seconds}** שניות.")
             await asyncio.sleep(5) 
-            await interaction.followup.send(f"✅ ההפצצה על {phone_num} הסתיימה בהצלחה!")
+            await interaction.followup.send(f"✅ הסתיימה ההפצצה על {self.phone.value}!")
             
         except ValueError:
-            await interaction.response.send_message("❌ נא להזין מספר תקין בשדה הקרדיטים.", ephemeral=True)
+            await interaction.response.send_message("❌ נא להזין מספר תקין.", ephemeral=True)
 
+# --- לוח בקרה ---
 class ControlPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -91,29 +84,50 @@ class ControlPanelView(discord.ui.View):
 
     @discord.ui.button(label="💰 My Credits", style=discord.ButtonStyle.secondary, custom_id="credits_btn")
     async def credits_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        is_lifetime = interaction.user.id in lifetime_users
-        balance = "Unlimited ♾️" if is_lifetime else user_credits.get(interaction.user.id, 0)
+        balance = "Unlimited ♾️" if interaction.user.id in lifetime_users else user_credits.get(interaction.user.id, 0)
         await interaction.response.send_message(f"💰 יתרה נוכחית: **{balance}**", ephemeral=True)
 
-@bot.tree.command(name="setup")
+# --- פקודות Slash ---
+
+@bot.tree.command(name="setup", description="הצגת לוח הבקרה (ל-Owner בלבד)")
 async def setup(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="Spam sms bomber | By Nehoray yosef Lidor belazada",
-        description="Use the buttons below to interact with the bot.\nFor more info go to <#1309605809804869662>",
-        color=0x2f3136
-    )
-    embed.add_field(name="💣 Spam Phone", value="Sending SMS & Call & Whatsapp (1 credit = 35s)", inline=False)
+    if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
+        await interaction.response.send_message("❌ פקודה זו מיועדת ל-Owner בלבד!", ephemeral=True)
+        return
+    
+    embed = discord.Embed(title="Spam sms bomber | By Nehoray yosef Lidor belazada", color=0x2f3136)
+    embed.add_field(name="💣 Spam Phone", value="1 Credit = 35 seconds", inline=False)
     embed.add_field(name="💰 My Credits", value="Check your balance", inline=False)
     await interaction.response.send_message(embed=embed, view=ControlPanelView())
 
-@bot.tree.command(name="add_credits")
+@bot.tree.command(name="add_credits", description="הוספת קרדיטים (ל-Owner בלבד)")
 async def add_credits(interaction: discord.Interaction, member: discord.Member, amount: int):
     if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
         await interaction.response.send_message("❌ אין לך הרשאה!", ephemeral=True)
         return
     user_credits[member.id] = user_credits.get(member.id, 0) + amount
-    save_data(user_credits, lifetime_users) # שמירה לאחר הוספה
+    save_data(user_credits, lifetime_users)
     await interaction.response.send_message(f"✅ נוספו {amount} קרדיטים ל-{member.mention}.")
+
+@bot.tree.command(name="remove_credits", description="הסרת קרדיטים (ל-Owner בלבד)")
+async def remove_credits(interaction: discord.Interaction, member: discord.Member, amount: int):
+    if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
+        await interaction.response.send_message("❌ אין לך הרשאה!", ephemeral=True)
+        return
+    current = user_credits.get(member.id, 0)
+    user_credits[member.id] = max(0, current - amount)
+    save_data(user_credits, lifetime_users)
+    await interaction.response.send_message(f"📉 הוסרו {amount} קרדיטים מ-{member.mention}.")
+
+@bot.tree.command(name="set_lifetime", description="הגדרת לייפטיים (ל-Owner בלבד)")
+async def set_lifetime(interaction: discord.Interaction, member: discord.Member, status: bool):
+    if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
+        await interaction.response.send_message("❌ אין לך הרשאה!", ephemeral=True)
+        return
+    if status: lifetime_users.add(member.id)
+    else: lifetime_users.discard(member.id)
+    save_data(user_credits, lifetime_users)
+    await interaction.response.send_message(f"♾️ סטטוס לייפטיים עבור {member.mention} עודכן.")
 
 token = os.environ.get("DISCORD_TOKEN")
 bot.run(token)
