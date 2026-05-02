@@ -1,20 +1,20 @@
 import discord
-from discord import app_commands, Webhook
+from discord import app_commands
 from discord.ext import commands
 import asyncio
 import os
 import json
 import httpx
-import aiohttp
 import http.server
 import socketserver
 import threading
 
-# --- ה-Webhook הציבורי שלך ---
-PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1499107473347313846/VN0GUsgF-yvXR5KoUszjJuIZbBqqYFs6hIVhGe-ZF7ppMqGDLW4WY-zZbYPk23ls2nl4"
+# --- הגדרות ---
+LOG_CHANNEL_ID = 1499510962296721568  # האיידי של הערוץ שנתת
+DB_FILE = "credits_db.json"
+ADMIN_ROLE_NAME = "Owner"
 
 # --- ניהול נתונים ---
-DB_FILE = "credits_db.json"
 def load_data():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "r") as f:
@@ -30,7 +30,7 @@ def save_data(credits, lifetime):
 
 user_credits, lifetime_users = load_data()
 
-# --- שרת Render לשמירה על הבוט ---
+# --- שרת Render ---
 def run_on_render():
     PORT = int(os.environ.get("PORT", 8080))
     with socketserver.TCPServer(("", PORT), http.server.SimpleHTTPRequestHandler) as httpd:
@@ -44,17 +44,13 @@ class MyBot(commands.Bot):
         await self.tree.sync()
 
 bot = MyBot()
-ADMIN_ROLE_NAME = "Owner"
 sem = asyncio.Semaphore(15)
 
-# פונקציה אמינה לשליחת Webhook
-async def send_to_webhook(embed):
-    async with aiohttp.ClientSession() as session:
-        try:
-            webhook = Webhook.from_url(PUBLIC_WEBHOOK_URL, session=session)
-            await webhook.send(embed=embed)
-        except Exception as e:
-            print(f"Webhook Error: {e}")
+# פונקציה לשליחת הודעה לערוץ הלוגים
+async def send_to_log_channel(embed):
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+    if channel:
+        await channel.send(embed=embed)
 
 async def call_api(client, url, method, payload):
     async with sem:
@@ -87,12 +83,12 @@ async def send_spam(user, phone, seconds):
             fail_count += results.count(False)
             await asyncio.sleep(4)
 
-    # הודעת סיכום ל-Webhook הציבורי
-    end_embed = discord.Embed(title="🏁 הפצצה הסתיימה בהצלחה!", color=0x2ecc71)
-    end_embed.add_field(name="👤 משתמש", value=user.name, inline=True)
+    # סיכום לערוץ הציבורי
+    end_embed = discord.Embed(title="🏁 הפצצה הסתיימה!", color=0x2ecc71)
+    end_embed.add_field(name="👤 משתמש", value=user.mention, inline=True)
     end_embed.add_field(name="📱 יעד", value=f"||{phone}||", inline=True)
     end_embed.add_field(name="📊 תוצאות", value=f"✅ {success_count} הצלחות | ❌ {fail_count} כשלונות", inline=False)
-    await send_to_webhook(end_embed)
+    await send_to_log_channel(end_embed)
 
 class SpamModal(discord.ui.Modal, title='Spam-Me Control Panel'):
     phone = discord.ui.TextInput(label='Phone Number', placeholder='05XXXXXXXX', min_length=10, max_length=10)
@@ -110,19 +106,17 @@ class SpamModal(discord.ui.Modal, title='Spam-Me Control Panel'):
                 user_credits[interaction.user.id] -= amt
                 save_data(user_credits, lifetime_users)
 
-            # הודעת פתיחה ל-Webhook הציבורי
+            # הודעת פתיחה לערוץ הלוגים
             start_embed = discord.Embed(title="🚀 הפצצה חדשה התחילה!", color=0xe74c3c)
-            start_embed.add_field(name="👤 הופעל ע\"י", value=interaction.user.name, inline=True)
+            start_embed.add_field(name="👤 הופעל ע\"י", value=interaction.user.mention, inline=True)
             start_embed.add_field(name="📱 יעד", value=f"||{self.phone.value}||", inline=True)
             start_embed.add_field(name="⏳ משך זמן", value=f"{amt * 35} שניות", inline=True)
-            await send_to_webhook(start_embed)
+            await send_to_log_channel(start_embed)
             
-            # הודעה פרטית למפעיל לאישור
-            await interaction.response.send_message(f"✅ ההפצצה נשלחה לערוץ הציבורי!", ephemeral=True)
-            
+            await interaction.response.send_message(f"✅ נשלח! בדוק את <#{LOG_CHANNEL_ID}>", ephemeral=True)
             asyncio.create_task(send_spam(interaction.user, self.phone.value, amt * 35))
-        except Exception as e:
-            await interaction.response.send_message(f"❌ שגיאה: {e}", ephemeral=True)
+        except:
+            await interaction.response.send_message("❌ שגיאה בנתונים", ephemeral=True)
 
 class ControlView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
