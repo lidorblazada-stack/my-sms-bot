@@ -1,54 +1,67 @@
 import discord
 from discord.ext import commands
 import asyncio
+import http.server
+import socketserver
+import threading
+import os
 
-# הגדרות בסיסיות
+# --- חלק 1: השרת שמרצה את RENDER (כדי שיהיה בחינם) ---
+def run_on_render():
+    PORT = int(os.environ.get("PORT", 8080))
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", PORT), handler) as httpd:
+        print(f"✅ Render server serving at port {PORT}")
+        httpd.serve_forever()
+
+threading.Thread(target=run_on_render, daemon=True).start()
+
+# --- חלק 2: הבוט של דיסקורד עם פקודות מהסרטון ---
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# מסד נתונים פשוט בתוך הקוד (בחיים האמיתיים עדיף קובץ)
 user_credits = {}
-admin_ids = [YOUR_DISCORD_ID_HERE] # שים פה את ה-ID שלך כדי להיות אדמין
+admin_ids = [1234567890] # תחליף את המספר הזה ב-ID שלך בדיסקורד!
 
 @bot.event
 async def on_ready():
-    print(f'Bot {bot.user.name} is online and ready to spam!')
+    print(f'🚀 Bot {bot.user.name} is ONLINE!')
 
-# פקודת עזרה חדשה
 @bot.command()
 async def setup(ctx):
-    embed = discord.Embed(title="🚀 SMS Bomber V6.1.1 - Cloud Edition", color=0xff0000)
-    embed.add_field(name="Commands", value="`!bomb [phone]` - Start attack\n`!credits` - Check balance\n`!add_credits [user] [amt]` (Admin Only)", inline=False)
+    embed = discord.Embed(title="🚀 SMS Bomber Cloud V6", color=0xff0000)
+    embed.add_field(name="פקודות", value="`!bomb [phone]` - התחלת הפצצה\n`!credits` - בדיקת יתרה", inline=False)
     await ctx.send(embed=embed)
 
-# בדיקת קרדיטים
 @bot.command()
 async def credits(ctx):
     balance = user_credits.get(ctx.author.id, 0)
     await ctx.send(f"💰 {ctx.author.name}, יש לך {balance} קרדיטים.")
 
-# הוספת קרדיטים (רק לאדמין)
 @bot.command()
 async def add_credits(ctx, member: discord.Member, amount: int):
     if ctx.author.id in admin_ids:
         user_credits[member.id] = user_credits.get(member.id, 0) + amount
         await ctx.send(f"✅ נוספו {amount} קרדיטים ל-{member.display_name}.")
     else:
-        await ctx.send("❌ אין לך הרשאת אדמין!")
+        await ctx.send("❌ אתה לא אדמין!")
 
-# פונקציית ההפצצה (סימולציה של מה שראית)
 @bot.command()
 async def bomb(ctx, phone: str):
     balance = user_credits.get(ctx.author.id, 0)
     if balance <= 0:
-        await ctx.send("❌ אין לך מספיק קרדיטים! פנה למנהל.")
+        await ctx.send("❌ אין לך קרדיטים!")
         return
     
     await ctx.send(f"💣 מתחיל מתקפה על {phone}...")
-    # כאן נכנס הלוגיקה של ה-Playwright שכתבנו קודם
-    user_credits[ctx.author.id] -= 1 # מוריד קרדיט אחד
+    user_credits[ctx.author.id] -= 1
     await asyncio.sleep(5)
-    await ctx.send(f"✅ המתקפה על {phone} הסתיימה. נשאר לך {user_credits[ctx.author.id]} קרדיטים.")
+    await ctx.send(f"✅ הסתיים! נשאר לך {user_credits[ctx.author.id]} קרדיטים.")
 
-bot.run("YOUR_TOKEN_HERE") # אל תדאג, Render משתמש ב-Environment Variable
+# משיכת הטוקן מהגדרות Render
+token = os.environ.get("DISCORD_TOKEN")
+if token:
+    bot.run(token)
+else:
+    print("❌ ERROR: No DISCORD_TOKEN found in Environment Variables!")
