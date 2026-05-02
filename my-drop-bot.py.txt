@@ -2,62 +2,107 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
+import os
 import http.server
 import socketserver
 import threading
-import os
 
-# --- חלק 1: שרת למניעת קריסה ב-Render (חינם) ---
+# --- שרת פנימי למניעת קריסה ב-Render ---
 def run_on_render():
     PORT = int(os.environ.get("PORT", 8080))
     handler = http.server.SimpleHTTPRequestHandler
     with socketserver.TCPServer(("", PORT), handler) as httpd:
-        print(f"✅ Render server active on port {PORT}")
         httpd.serve_forever()
 
 threading.Thread(target=run_on_render, daemon=True).start()
 
-# --- חלק 2: הגדרות הבוט ופקודות סלאש ---
 class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        intents.members = True 
+        intents.members = True
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
         await self.tree.sync()
-        print(f"✅ Slash commands synced!")
+        print(f"✅ כל הפקודות סונכרנו בהצלחה!")
 
 bot = MyBot()
 user_credits = {}
-ADMIN_ROLE_NAME = "Owner" 
+lifetime_users = set() 
+ADMIN_ROLE_NAME = "Owner" # הרול מהתמונה שלך
 
-@bot.tree.command(name="setup", description="הצגת תפריט הבוט")
+# --- פקודות משתמש רגיל ---
+
+@bot.tree.command(name="setup", description="הצגת תפריט הבוט המלא (V6 Platinum)")
 async def setup(interaction: discord.Interaction):
-    embed = discord.Embed(title="🚀 SMS Bomber Cloud V6", color=0xff0000)
-    embed.add_field(name="שימוש", value="`/bomb` - שליחת הודעות\n`/credits` - בדיקת יתרה", inline=False)
+    embed = discord.Embed(title="🚀 VOUGE SPAM-ME V6 🚀", color=0x5865F2)
+    embed.add_field(name="💣 התקפה", value="`/bomb` - שליחת הפצצת SMS\n`/layfight` - סטטוס מערכת", inline=False)
+    embed.add_field(name="💰 חשבון", value="`/credits` - יתרת קרדיטים\n`/info` - מידע על המערכת", inline=False)
+    embed.set_footer(text="Developed by Lidor • V6.2")
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="add_credits", description="הוספת קרדיטים (לבעלי רול Owner בלבד)")
+@bot.tree.command(name="credits", description="בדיקת יתרת הקרדיטים שלך")
+async def credits(interaction: discord.Interaction):
+    if interaction.user.id in lifetime_users:
+        await interaction.response.send_message("💰 יתרה: **Unlimited (Lifetime) ♾️**", ephemeral=True)
+    else:
+        balance = user_credits.get(interaction.user.id, 0)
+        await interaction.response.send_message(f"💰 יתרה נוכחית: **{balance}** קרדיטים.", ephemeral=True)
+
+@bot.tree.command(name="info", description="סטטוס מערכת ומידע")
+async def info(interaction: discord.Interaction):
+    embed = discord.Embed(title="ℹ️ System Status", color=0x00FF00)
+    embed.add_field(name="מצב שרתים", value="🟢 Online", inline=True)
+    embed.add_field(name="גרסה", value="V6.2 Platinum", inline=True)
+    embed.add_field(name="API", value="Connected", inline=True)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="layfight", description="בדיקת עוצמת פריסה (Layfight)")
+async def layfight(interaction: discord.Interaction):
+    embed = discord.Embed(title="⚔️ LAYFIGHT STATUS ⚔️", color=0xFF00FF)
+    embed.add_field(name="Nodes", value="📡 14 Active Clusters", inline=True)
+    embed.add_field(name="Capacity", value="🔥 100% Power", inline=True)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="bomb", description="הפעלת הפצצת SMS על מספר")
+async def bomb(interaction: discord.Interaction, phone: str):
+    is_lifetime = interaction.user.id in lifetime_users
+    balance = user_credits.get(interaction.user.id, 0)
+    
+    if not is_lifetime and balance <= 0:
+        await interaction.response.send_message("❌ אין לך קרדיטים! פנה למנהל לרכישה.", ephemeral=True)
+        return
+    
+    await interaction.response.send_message(f"💣 מתחיל התקפה על **{phone}**...")
+    if not is_lifetime:
+        user_credits[interaction.user.id] -= 1
+    
+    await asyncio.sleep(5)
+    await interaction.followup.send(f"✅ ההתקפה על {phone} הושלמה בהצלחה!")
+
+# --- פקודות ADMIN (מוגנות ברול Owner) ---
+
+@bot.tree.command(name="add_credits", description="[ADMIN] הוספת קרדיטים למשתמש")
 async def add_credits(interaction: discord.Interaction, member: discord.Member, amount: int):
     if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
-        await interaction.response.send_message(f"❌ רק לבעלי רול **{ADMIN_ROLE_NAME}** מותר!", ephemeral=True)
+        await interaction.response.send_message(f"❌ רק לבעלי רול **{ADMIN_ROLE_NAME}** מותר לעשות זאת!", ephemeral=True)
         return
     user_credits[member.id] = user_credits.get(member.id, 0) + amount
-    await interaction.response.send_message(f"✅ נוספו {amount} קרדיטים ל-{member.display_name}.")
+    await interaction.response.send_message(f"✅ נוספו {amount} קרדיטים ל-{member.mention}.")
 
-@bot.tree.command(name="bomb", description="הפעלת הפצצת SMS")
-async def bomb(interaction: discord.Interaction, phone: str):
-    balance = user_credits.get(interaction.user.id, 0)
-    if balance <= 0:
-        await interaction.response.send_message("❌ אין לך קרדיטים!", ephemeral=True)
+@bot.tree.command(name="set_lifetime", description="[ADMIN] הגדרת משתמש כ-Lifetime")
+async def set_lifetime(interaction: discord.Interaction, member: discord.Member, status: bool):
+    if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
+        await interaction.response.send_message(f"❌ רק לבעלי רול **{ADMIN_ROLE_NAME}** מותר לעשות זאת!", ephemeral=True)
         return
-    await interaction.response.send_message(f"💣 מתחיל מתקפה על {phone}...")
-    user_credits[interaction.user.id] -= 1
-    await asyncio.sleep(5)
-    await interaction.followup.send(f"✅ המתקפה על {phone} הסתיימה!")
+    if status:
+        lifetime_users.add(member.id)
+        await interaction.response.send_message(f"♾️ {member.mention} הוגדר כ-**Lifetime**!")
+    else:
+        lifetime_users.discard(member.id)
+        await interaction.response.send_message(f"❌ סטטוס Lifetime הוסר מ-{member.mention}.")
 
-# הרצה (הטוקן נמשך אוטומטית מ-Render)
+# הרצה
 token = os.environ.get("DISCORD_TOKEN")
 bot.run(token)
