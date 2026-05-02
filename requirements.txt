@@ -1,6 +1,3 @@
 discord.py
 httpx
 aiohttp
-requests
-playwright
-playwright-stealth
