@@ -31,7 +31,7 @@ def save_data(credits, lifetime):
 
 user_credits, lifetime_users = load_data()
 
-# שרת Render
+# שרת Render למניעת קריסה
 def run_on_render():
     PORT = int(os.environ.get("PORT", 8080))
     with socketserver.TCPServer(("", PORT), http.server.SimpleHTTPRequestHandler) as httpd:
@@ -47,14 +47,10 @@ class MyBot(commands.Bot):
 bot = MyBot()
 sem = asyncio.Semaphore(15)
 
-# פונקציה לשליחה כפולה (גם לערוץ וגם ל-Webhook)
 async def broadcast_log(embed):
-    # 1. שליחה לערוץ הצאט
     channel = bot.get_channel(LOG_CHANNEL_ID)
     if channel:
         await channel.send(embed=embed)
-    
-    # 2. שליחה ל-Webhook
     async with aiohttp.ClientSession() as session:
         try:
             webhook = Webhook.from_url(WEBHOOK_URL, session=session)
@@ -92,16 +88,16 @@ async def send_spam(user, phone, seconds):
             fail_count += results.count(False)
             await asyncio.sleep(5)
 
-    # ההודעה הזאת תישלח רק כשהזמן באמת ייגמר!
-    finish_embed = discord.Embed(title="🏁 ההספמה הושלמה סופית!", color=0x2ecc71)
+    finish_embed = discord.Embed(title="🏁 ההספמה הושלמה בהצלחה!", color=0x2ecc71, description="היעד הופצץ כנדרש.")
     finish_embed.add_field(name="👤 משתמש", value=user.mention, inline=True)
-    finish_embed.add_field(name="📱 יעד", value=f"||{phone}||", inline=True)
-    finish_embed.add_field(name="📊 תוצאות", value=f"✅ {success_count} הצלחות | ❌ {fail_count} כשלונות", inline=False)
+    finish_embed.add_field(name="📱 יעד", value=f"`{phone}`", inline=True)
+    finish_embed.add_field(name="📊 סיכום", value=f"✅ **{success_count}** הצלחות\n❌ **{fail_count}** כשלונות", inline=False)
+    finish_embed.set_footer(text="Spam-Me | Power by Render")
     await broadcast_log(finish_embed)
 
-class SpamModal(discord.ui.Modal, title='Spam-Me Panel'):
-    phone = discord.ui.TextInput(label='Phone Number', placeholder='05XXXXXXXX', min_length=10, max_length=10)
-    credits = discord.ui.TextInput(label='Credits (1 = 35s)', placeholder='1')
+class SpamModal(discord.ui.Modal, title='🚀 Spam-Me Control Panel'):
+    phone = discord.ui.TextInput(label='מספר טלפון ליעד', placeholder='05XXXXXXXX', min_length=10, max_length=10, style=discord.TextStyle.short)
+    credits = discord.ui.TextInput(label='כמות קרדיטים (כל קרדיט = 35 שניות)', placeholder='1', min_length=1, max_length=2)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -109,33 +105,40 @@ class SpamModal(discord.ui.Modal, title='Spam-Me Panel'):
             is_owner = any(r.name == ADMIN_ROLE_NAME for r in interaction.user.roles)
             
             if not (interaction.user.id in lifetime_users or is_owner) and user_credits.get(interaction.user.id, 0) < amt:
-                return await interaction.response.send_message("❌ אין קרדיטים!", ephemeral=True)
+                return await interaction.response.send_message("❌ **אין לך מספיק קרדיטים לביצוע הפעולה!**", ephemeral=True)
 
             if not (interaction.user.id in lifetime_users or is_owner):
                 user_credits[interaction.user.id] -= amt
                 save_data(user_credits, lifetime_users)
 
-            # הודעת פתיחה
-            start_embed = discord.Embed(title="🚀 הפצצה חדשה התחילה!", color=0xe74c3c)
-            start_embed.add_field(name="👤 הופעל ע\"י", value=interaction.user.mention, inline=True)
-            start_embed.add_field(name="📱 יעד", value=f"||{self.phone.value}||", inline=True)
-            start_embed.add_field(name="⏳ זמן", value=f"{amt * 35} שניות", inline=True)
+            start_embed = discord.Embed(title="🚀 יצאנו לדרך! ההפצצה החלה", color=0xe74c3c)
+            start_embed.add_field(name="👤 הופעל על ידי", value=interaction.user.mention, inline=True)
+            start_embed.add_field(name="📱 מספר יעד", value=f"||{self.phone.value}||", inline=True)
+            start_embed.add_field(name="⏳ זמן הפצצה", value=f"{amt * 35} שניות", inline=True)
+            start_embed.set_thumbnail(url="https://i.imgur.com/8N6SInO.gif") # גיף של פצצה אם תרצה
             await broadcast_log(start_embed)
             
-            await interaction.response.send_message(f"✅ יצאנו לדרך! עקוב אחרי <#{LOG_CHANNEL_ID}>", ephemeral=True)
+            await interaction.response.send_message(f"✅ **ההפצצה על {self.phone.value} החלה!** בדוק את <#{LOG_CHANNEL_ID}>", ephemeral=True)
             asyncio.create_task(send_spam(interaction.user, self.phone.value, amt * 35))
-        except:
-            await interaction.response.send_message("❌ שגיאה בנתונים", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ שגיאה: {e}", ephemeral=True)
 
 class ControlView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @discord.ui.button(label="🚀 Spam Phone", style=discord.ButtonStyle.primary, custom_id="sp")
+    @discord.ui.button(label="🚀 הפעל הפצצה", style=discord.ButtonStyle.danger, custom_id="sp")
     async def sp(self, i, b): await i.response.send_modal(SpamModal())
 
-@bot.tree.command(name="setup")
+@bot.tree.command(name="setup", description="הגדרת פאנל השליטה של הבוט")
 async def setup(i: discord.Interaction):
-    if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles): return
-    emb = discord.Embed(title="Spam-Me Bomber", description="לחץ על הכפתור למטה", color=0x2f3136)
+    if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles):
+        return await i.response.send_message("❌ אין לך הרשאות מתאימות!", ephemeral=True)
+    
+    emb = discord.Embed(
+        title="🔥 Spam-Me Control Panel",
+        description="ברוכים הבאים למערכת ההפצצה המתקדמת.\n\n**הנחיות:**\n1. לחץ על הכפתור האדום למטה.\n2. הזן מספר טלפון וקרדיטים.\n3. המתן לסיום התהליך.",
+        color=0x2f3136
+    )
+    emb.set_image(url="https://i.imgur.com/x99mX6p.png") # תמונה יפה לפאנל
     await i.response.send_message(embed=emb, view=ControlView())
 
 bot.run(os.environ.get("DISCORD_TOKEN"))
