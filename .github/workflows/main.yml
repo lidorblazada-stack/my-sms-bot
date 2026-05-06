@@ -1,0 +1,22 @@
+name: Guard Bot 24/7
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # מאפשר לך להפעיל ידנית אם צריך
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install discord.py httpx python-dotenv
+      - name: Run Bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          FIREBASE_URL: ${{ secrets.FIREBASE_URL }}
+        run: python main.py
