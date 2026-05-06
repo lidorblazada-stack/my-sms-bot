@@ -5,49 +5,62 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# הגדרות שמושכות מה-Secrets של GitHub
 TOKEN = os.getenv("BOT_TOKEN")
-FB_URL = os.getenv("FIREBASE_URL") # הלינק שצילמת
-LOG_ID = 1499510962296721568 
+FB_URL = os.getenv("FIREBASE_URL")
 
-async def fb_update(path, data):
-    """שומר מידע ב-Firebase בלייב"""
+# פונקציית עזר לעדכון פיירבייס
+async def fb_request(method, path, data=None):
     async with httpx.AsyncClient() as client:
         url = f"{FB_URL}{path}.json"
-        try:
-            await client.put(url, json=data)
-        except Exception as e:
-            print(f"Error: {e}")
+        if method == "PUT":
+            res = await client.put(url, json=data)
+        elif method == "GET":
+            res = await client.get(url)
+        return res.json()
 
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
-    # מעדכן את האתר של פיירבייס שהשומר עלה
-    await fb_update("guard_status", {"status": "Active", "time": str(datetime.datetime.now())})
-    print(f"🛡️ {bot.user} שומר השרת באוויר!")
+    # מעדכן סטטוס בפיירבייס שהשומר עלה
+    await fb_request("PUT", "guard_status", {"status": "Active", "last_boot": str(datetime.datetime.now())})
+    print(f"🛡️ {bot.user} שומר השרת נכנס למשמרת!")
+
+# --- פקודות שומר השרת ---
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def blacklist(ctx, user: discord.Member):
+    """חוסם משתמש ורושם אותו בפיירבייס"""
+    await fb_request("PUT", f"blacklist/{user.id}", {"name": user.name, "reason": "Blocked by Admin"})
+    await user.kick(reason="נכנסת לרשימה השחורה של שומר השרת")
+    await ctx.send(f"🚫 המשתמש **{user.name}** נוסף לרשימה השחורה ונזרק מהשרת.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def unblacklist(ctx, user_id: str):
+    """מסיר משתמש מהרשימה השחורה"""
+    await fb_request("PUT", f"blacklist/{user_id}", None)
+    await ctx.send(f"✅ המשתמש עם האיידי {user_id} הוסר מהרשימה השחורה.")
 
 @bot.event
 async def on_member_join(member):
-    # שומר כניסה ב-Firebase ושולח Welcome
-    user_data = {"name": member.name, "joined": str(datetime.datetime.now())}
-    await fb_update(f"members/{member.id}", user_info)
-    
-    chan = bot.get_channel(LOG_ID)
-    if chan:
-        embed = discord.Embed(title=f"⚡ ברוך הבא {member.name}", color=0x00ff00)
-        await chan.send(embed=embed)
+    """בודק כל מי שנכנס אם הוא ברשימה השחורה"""
+    is_blocked = await fb_request("GET", f"blacklist/{member.id}")
+    if is_blocked:
+        await member.kick(reason="ניסיון כניסה של משתמש חסום (Blacklist)")
+        print(f"⚠️ נחסמה כניסה של משתמש חסום: {member.name}")
 
 @bot.event
 async def on_message(message):
     if message.author.bot: return
-    # בדיקת חסימות (Blacklist) מהפיירבייס
-    async with httpx.AsyncClient() as client:
-        res = await client.get(f"{FB_URL}blacklist/{message.author.id}.json")
-        if res.json():
-            await message.delete()
-            return
+    
+    # הגנה מפני קישורים (אם אתה רוצה)
+    if "http" in message.content and not message.author.guild_permissions.administrator:
+        await message.delete()
+        await message.channel.send(f"{message.author.mention}, אסור לשלוח לינקים בשרת הזה! 🛡️")
+    
     await bot.process_commands(message)
 
 bot.run(TOKEN)
