@@ -1,0 +1,23 @@
+name: Guard Bot 24/7
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 */6 * * *' # מרענן את הבוט כל 6 שעות
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install discord.py httpx python-dotenv
+      - name: Start Guard
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          FIREBASE_URL: ${{ secrets.FIREBASE_URL }}
+        run: python main.py
