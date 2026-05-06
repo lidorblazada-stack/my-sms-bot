@@ -5,14 +5,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# הגדרות שמושכות מה-Secrets של השרת
+# הגדרות שמושכות נתונים מהמערכת (כדי שלא יפרצו לך בגיטהאב)
 TOKEN = os.getenv("BOT_TOKEN")
-FB_URL = os.getenv("FIREBASE_URL")
-LOG_ID = 1499510962296721568
+FB_URL = "https://vouge-guard-default-rtdb.firebaseio.com/"
+LOG_CHANNEL = 1499510962296721568
 
-async def fb_put(path, data):
+async def fb_update(path, data):
+    """פונקציה שכותבת ישירות לתוך ה-Firebase שבתמונה שלך"""
     async with httpx.AsyncClient() as client:
-        # החיבור לפיירבייס שבתמונה שלך
+        # פיירבייס חייב .json בסוף הלינק
         url = f"{FB_URL}{path}.json"
         await client.put(url, json=data)
 
@@ -21,17 +22,22 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    # עדכון ראשון לפיירבייס שהבוט עלה
-    await fb_put("status", {"bot_status": "online", "time": str(datetime.datetime.now())})
-    print(f"✅ {bot.user} מחובר ופיירבייס מעודכן!")
+    # ברגע שהבוט עולה, הוא יוצר שורה ב-Firebase
+    status_data = {
+        "status": "online",
+        "last_seen": str(datetime.datetime.now())
+    }
+    await fb_update("bot_info", status_data)
+    print(f"✅ {bot.user} מחובר לגיטהאב ולפיירבייס!")
 
 @bot.event
 async def on_member_join(member):
-    # שומר כל כניסה לפיירבייס
-    await fb_put(f"logs/joins/{member.id}", {"user": member.name, "at": str(datetime.datetime.now())})
-    
-    chan = bot.get_channel(LOG_ID)
-    if chan:
-        await chan.send(f"📥 {member.name} נשמר בפיירבייס.")
+    # שומר כל מי שנכנס לשרת בתוך הפיירבייס
+    user_info = {
+        "username": member.name,
+        "id": member.id,
+        "time": str(datetime.datetime.now())
+    }
+    await fb_update(f"users/{member.id}", user_info)
 
 bot.run(TOKEN)
