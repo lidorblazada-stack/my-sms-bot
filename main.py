@@ -1,36 +1,37 @@
-@bot.tree.command(name="warn", description="מתן אזהרה למשתמש ושמירה ב-Firebase")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def warn(interaction: discord.Interaction, member: discord.Member, reason: str = "לא צוינה סיבה"):
-    # מושכים את נתוני האזהרות מה-Firebase
-    all_warns = await fb_get("warnings") or {}
-    user_id = str(member.id)
-    
-    # בודקים כמה אזהרות כבר יש לו
-    if user_id not in all_warns:
-        all_warns[user_id] = []
-    
-    # מוסיפים את האזהרה החדשה
-    warn_data = {
-        "reason": reason,
-        "admin": interaction.user.name,
-        "date": str(datetime.datetime.now().date())
-    }
-    all_warns[user_id].append(warn_data)
-    
-    # שומרים חזרה ב-Firebase
-    await fb_put("warnings", all_warns)
-    
-    warn_count = len(all_warns[user_id])
-    
-    embed = discord.Embed(title=f"⚠️ אזהרה נרשמה במערכת", color=discord.Color.orange())
-    embed.add_field(name="משתמש", value=member.mention, inline=True)
-    embed.add_field(name="מספר אזהרה", value=f"**{warn_count}**", inline=True)
-    embed.add_field(name="סיבה", value=reason, inline=False)
-    embed.set_footer(text=f"נרשם על ידי {interaction.user.name}")
-    
-    await interaction.response.send_message(embed=embed)
+import discord
+from discord.ext import commands
+import os, datetime, httpx
+from dotenv import load_dotenv
 
-    # אם הוא הגיע ל-3 אזהרות - הגנה אוטומטית
-    if warn_count >= 3:
-        await member.timeout(datetime.timedelta(hours=2), reason="צבר 3 אזהרות במערכת Cyber-Shield")
-        await interaction.followup.send(f"🛡️ המשתמש {member.mention} הושתק אוטומטית לשעתיים כי הגיע ל-3 אזהרות.")
+load_dotenv()
+
+# הגדרות שמושכות מה-Secrets של השרת
+TOKEN = os.getenv("BOT_TOKEN")
+FB_URL = os.getenv("FIREBASE_URL")
+LOG_ID = 1499510962296721568
+
+async def fb_put(path, data):
+    async with httpx.AsyncClient() as client:
+        # החיבור לפיירבייס שבתמונה שלך
+        url = f"{FB_URL}{path}.json"
+        await client.put(url, json=data)
+
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+
+@bot.event
+async def on_ready():
+    await bot.tree.sync()
+    # עדכון ראשון לפיירבייס שהבוט עלה
+    await fb_put("status", {"bot_status": "online", "time": str(datetime.datetime.now())})
+    print(f"✅ {bot.user} מחובר ופיירבייס מעודכן!")
+
+@bot.event
+async def on_member_join(member):
+    # שומר כל כניסה לפיירבייס
+    await fb_put(f"logs/joins/{member.id}", {"user": member.name, "at": str(datetime.datetime.now())})
+    
+    chan = bot.get_channel(LOG_ID)
+    if chan:
+        await chan.send(f"📥 {member.name} נשמר בפיירבייס.")
+
+bot.run(TOKEN)
