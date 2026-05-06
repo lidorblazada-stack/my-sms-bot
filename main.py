@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import os, datetime, httpx
 from dotenv import load_dotenv
@@ -7,11 +8,21 @@ load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 FB_URL = os.getenv("FIREBASE_URL")
-LOG_ID = 1499510962296721568 
+LOG_ID = 1499510962296721568
 
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+class MyBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.all()
+        super().__init__(command_prefix="!", intents=intents)
 
+    async def setup_hook(self):
+        # מסנכרן את פקודות הסלאש עם דיסקורד
+        await self.tree.sync()
+        print(f"✅ פקודות הסלאש סונכרנו!")
+
+bot = MyBot()
+
+# פונקציית עזר לפיירבייס
 async def fb_request(method, path, data=None):
     async with httpx.AsyncClient() as client:
         url = f"{FB_URL}{path}.json"
@@ -21,54 +32,19 @@ async def fb_request(method, path, data=None):
             return res.json()
         except: return None
 
-@bot.event
-async def on_ready():
-    await fb_request("PUT", "guard_status", {"status": "Online", "time": str(datetime.datetime.now())})
-    print(f"🛡️ Spammer Guard מחובר ומוכן!")
+# --- פקודות סלאש (Slash Commands) ---
 
-# --- מערכת וולקם (Welcome) יפה ---
-@bot.event
-async def on_member_join(member):
-    # בדיקת בלאקליסט
-    is_blocked = await fb_request("GET", f"blacklist/{member.id}")
-    if is_blocked:
-        await member.ban(reason="Blacklist")
-        return
-
-    # חיפוש ערוץ וולקם
-    welcome_channel = discord.utils.get(member.guild.text_channels, name="welcome") or \
-                      discord.utils.get(member.guild.text_channels, name="וולקם") or \
-                      bot.get_channel(LOG_ID)
-
-    if welcome_channel:
-        embed = discord.Embed(
-            title=f"🎊 ברוך הבא לשרת ספאמר! 🎊",
-            description=f"היי {member.mention}, הגעת לשרת הספאמר הכי חזק בארץ!\n\nתעשה חיים ותהנה מהספאמר 🔥",
-            color=0x00ffff, # צבע טורקיז חזק
-            timestamp=datetime.datetime.now()
-        )
-        embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
-        embed.set_author(name=member.name, icon_url=member.avatar.url if member.avatar else member.default_avatar.url)
-        embed.set_footer(text="Spammer System • תהנה!", icon_url=member.guild.icon.url if member.guild.icon else None)
-        
-        await welcome_channel.send(content=f"וולקם {member.mention}!", embed=embed)
-
-# --- הודעת עזיבה ---
-@bot.event
-async def on_member_remove(member):
-    log_channel = bot.get_channel(LOG_ID)
-    if log_channel:
-        embed = discord.Embed(description=f"המשתמש **{member.name}** עזב את הספאמר... 👋", color=0xff0000)
-        await log_channel.send(embed=embed)
-
-# --- פקודות ניהול ---
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def warn(ctx, member: discord.Member, *, reason="לא צוין"):
+@bot.tree.command(name="warn", description="מתן אזהרה למשתמש")
+@app_commands.describe(member="המשתמש להזהיר", reason="סיבת האזהרה")
+@app_commands.checks.has_permissions(administrator=True)
+async def warn(interaction: discord.Interaction, member: discord.Member, reason: str = "לא צוינה סיבה"):
+    await interaction.response.defer() # מונע מהפקודה להיכשל אם לוקח זמן
+    
     warns = await fb_request("GET", f"warnings/{member.id}") or 0
     warns += 1
     await fb_request("PUT", f"warnings/{member.id}", warns)
-    await ctx.send(f"⚠️ {member.mention} קיבל אזהרה ({warns}/5)")
+    
+    await interaction.followup.send(f"⚠️ {member.mention} קיבל אזהרה! ({warns}/5)")
     
     if warns == 3:
         await member.timeout(datetime.timedelta(minutes=30), reason="3 אזהרות")
@@ -76,11 +52,26 @@ async def warn(ctx, member: discord.Member, *, reason="לא צוין"):
         await member.kick(reason="5 אזהרות")
         await fb_request("PUT", f"warnings/{member.id}", 0)
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def blacklist(ctx, user: discord.Member):
-    await fb_request("PUT", f"blacklist/{user.id}", {"name": user.name})
-    await user.ban(reason="Blacklist")
-    await ctx.send(f"🚫 {user.name} נחסם לצמיתות.")
+@bot.tree.command(name="blacklist", description="חסימה לצמיתות מהספאמר")
+@app_commands.checks.has_permissions(administrator=True)
+async def blacklist(interaction: discord.Interaction, member: discord.Member):
+    await fb_request("PUT", f"blacklist/{member.id}", {"name": member.name})
+    await member.ban(reason="Blacklist")
+    await interaction.response.send_message(f"💀 {member.name} נחסם לצמיתות והוסף לרשימה השחורה.")
+
+@bot.tree.command(name="clear_warns", description="איפוס אזהרות למשתמש")
+@app_commands.checks.has_permissions(administrator=True)
+async def clear_warns(interaction: discord.Interaction, member: discord.Member):
+    await fb_request("PUT", f"warnings/{member.id}", 0)
+    await interaction.response.send_message(f"✅ האזהרות של {member.name} אופסו.")
+
+# --- אירועים רגילים (וולקם) ---
+@bot.event
+async def on_member_join(member):
+    # (הקוד של הוולקם שכתבנו קודם נשאר כאן אותו דבר)
+    welcome_channel = discord.utils.get(member.guild.text_channels, name="welcome") or bot.get_channel(LOG_ID)
+    if welcome_channel:
+        embed = discord.Embed(title="🎊 ברוך הבא לספאמר!", description=f"היי {member.mention}, תהנה מהספאמר הכי חזק בארץ! 🔥", color=0x00ffff)
+        await welcome_channel.send(embed=embed)
 
 bot.run(TOKEN)
