@@ -28,7 +28,6 @@ jobs:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           FIREBASE_URL: ${{ secrets.FIREBASE_URL }}
           ALT_BOT_TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
-        # הפקודה הזו מריצה את שניהם יחד ברקע כדי שלא יכבו אחד את השני
         run: |
-          python alts.py & 
+          python alts.py &
           python main.py
