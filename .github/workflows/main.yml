@@ -22,7 +22,8 @@ jobs:
 
       - name: Start Shield Bot
         env:
-          DISCORD_TOKEN: ${{ secrets.CYBER_SHIELD_TOKEN }}
+          # הבוט הראשי מחפש DISCORD_TOKEN
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         run: python main.py
 
   run-alt-detector:
@@ -41,6 +42,6 @@ jobs:
 
       - name: Start Alt Detector
         env:
-          # כאן התיקון - הגדרנו את המשתנה שהקוד מחפש
+          # בוט האלטים מחפש משתנה שנקרא TOKEN (לפי השגיאה בלוגים)
           TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
         run: python alts.py
