@@ -1,4 +1,4 @@
-name: Run Both Bots 24/7
+name: Cyber-Shield Bot 24/7
 
 on:
   push:
@@ -9,29 +9,38 @@ jobs:
   run-main-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
-      - name: Install dependencies
-        run: pip install discord.py
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: pip install discord.py firebase-admin
+
       - name: Start Shield Bot
         env:
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          # כאן התיקון - הוא מושך את הטוקן מהשם הנכון ב-Secrets שלך
+          DISCORD_TOKEN: ${{ secrets.CYBER_SHIELD_TOKEN }}
         run: python main.py
 
   run-alt-detector:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
-      - name: Install dependencies
+          python-version: '3.9'
+
+      - name: Install Dependencies
         run: pip install discord.py
+
       - name: Start Alt Detector
         env:
-          ALT_BOT_TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
-        run: python alts.py
+          DISCORD_TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
+        run: python alt_detector.py
