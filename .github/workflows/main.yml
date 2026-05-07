@@ -29,5 +29,5 @@ jobs:
           FIREBASE_URL: ${{ secrets.FIREBASE_URL }}
           ALT_BOT_TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
         run: |
-          python alts.py &
+          python alts.py & 
           python main.py
