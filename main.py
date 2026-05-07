@@ -21,14 +21,14 @@ if not firebase_admin._apps:
     cred = credentials.Certificate("serviceAccountKey.json")
     firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_URL})
 
-invites = {}
-
-# --- הגנה: רק Owner ---
+# --- הגנה: רק Owner יכול ---
 def is_owner():
     async def predicate(interaction: discord.Interaction):
+        # הבדיקה שקובעת שרק מי שעם רול Owner יכול להשתמש בפקודה
         has_role = any(role.name == "Owner" for role in interaction.user.roles)
-        if has_role: return True
-        await interaction.response.send_message("❌ פקודה זו ל-**Owner** בלבד!", ephemeral=True)
+        if has_role:
+            return True
+        await interaction.response.send_message("❌ פקודה זו שמורה ל-**Owner** בלבד!", ephemeral=True)
         return False
     return app_commands.check(predicate)
 
@@ -64,9 +64,9 @@ class CyberShield(commands.Bot):
 
 bot = CyberShield()
 
-# --- פקודות ניהול (Owner Only) ---
+# --- פקודות ניהול (מוגנות ב-Owner) ---
 
-@bot.tree.command(name="warn", description="מתן אזהרה")
+@bot.tree.command(name="warn", description="מתן אזהרה (Owner Only)")
 @is_owner()
 async def warn(interaction: discord.Interaction, member: discord.Member, reason: str = "ללא סיבה"):
     ref = db.reference(f'users/{member.id}/warnings')
@@ -82,7 +82,7 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
         ref.set(0)
     await interaction.response.send_message(msg)
 
-@bot.tree.command(name="unwarn", description="הורדת אזהרה")
+@bot.tree.command(name="unwarn", description="הורדת אזהרה (Owner Only)")
 @is_owner()
 async def unwarn(interaction: discord.Interaction, member: discord.Member):
     ref = db.reference(f'users/{member.id}/warnings')
@@ -90,30 +90,36 @@ async def unwarn(interaction: discord.Interaction, member: discord.Member):
     ref.set(w)
     await interaction.response.send_message(f"✅ הורדה אזהרה ל-{member.mention}. מצב: {w}/5")
 
-@bot.tree.command(name="blacklist_add", description="חסימת ID")
+@bot.tree.command(name="blacklist_add", description="חסימת ID (Owner Only)")
 @is_owner()
 async def blacklist_add(interaction: discord.Interaction, user_id: str):
     db.reference(f'blacklist/{user_id}').set(True)
-    await interaction.response.send_message(f"🚫 {user_id} נחסם.")
+    await interaction.response.send_message(f"🚫 {user_id} נחסם מהשרת.")
 
-@bot.tree.command(name="setup_feedback", description="פאנל פידבק")
+@bot.tree.command(name="blacklist_remove", description="הסרת חסימה (Owner Only)")
+@is_owner()
+async def blacklist_remove(interaction: discord.Interaction, user_id: str):
+    db.reference(f'blacklist/{user_id}').delete()
+    await interaction.response.send_message(f"✅ {user_id} שוחרר מהחסימה.")
+
+@bot.tree.command(name="setup_feedback", description="הצבת פאנל פידבק (Owner Only)")
 @is_owner()
 async def setup_feedback(interaction: discord.Interaction):
     embed = discord.Embed(title="『💎』 פאנל פידבק", description="שתפו אותנו בדעתכם!", color=0x2b2d31)
     await interaction.channel.send(embed=embed, view=FeedbackView())
-    await interaction.response.send_message("נוצר.", ephemeral=True)
+    await interaction.response.send_message("הפאנל נוצר.", ephemeral=True)
 
-# --- פקודות משתמשים (דיווח והמלצה) ---
+# --- פקודות משתמשים (פתוחות לכולם) ---
 
 @bot.tree.command(name="report", description="דיווח על משתמש בעייתי")
 async def report(interaction: discord.Interaction, member: discord.Member, reason: str):
     channel = bot.get_channel(REPORT_CHANNEL_ID)
     embed = discord.Embed(title="🚨 דיווח משתמש חדש", color=0xff0000, timestamp=datetime.now(timezone.utc))
     embed.add_field(name="המדווח:", value=interaction.user.mention)
-    embed.add_field(name="המשתמש הבעייתי:", value=member.mention)
+    embed.add_field(name="הבעייתי:", value=member.mention)
     embed.add_field(name="סיבה:", value=reason)
     if channel: await channel.send(embed=embed)
-    await interaction.response.send_message("הדיווח נשלח לצוות לבדיקה.", ephemeral=True)
+    await interaction.response.send_message("הדיווח נשלח לצוות.", ephemeral=True)
 
 @bot.tree.command(name="recommend", description="שלח המלצה על השרת")
 async def recommend(interaction: discord.Interaction, text: str):
@@ -121,18 +127,15 @@ async def recommend(interaction: discord.Interaction, text: str):
     embed = discord.Embed(title="⭐️ המלצה חדשה!", description=text, color=0xf1c40f, timestamp=datetime.now(timezone.utc))
     embed.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
     if channel: await channel.send(embed=embed)
-    await interaction.response.send_message("תודה על ההמלצה שלך! ✨", ephemeral=True)
+    await interaction.response.send_message("תודה על ההמלצה! ✨", ephemeral=True)
 
-# --- אירועים והגנות ---
+# --- אירועים והגנות אוטומטיות ---
 
 @bot.event
 async def on_member_join(member):
-    # בדיקת בלאקליסט
     if db.reference(f'blacklist/{member.id}').get():
         await member.kick(reason="Blacklisted")
         return
-    
-    # הודעת וולקם
     ch = member.guild.system_channel
     if ch:
         embed = discord.Embed(title="ברוך הבא לשרת החזק במדינה! 🔥", description=f"{member.mention}, שמחים שבאת!", color=0x2ecc71)
@@ -145,10 +148,8 @@ async def on_message(message):
     is_staff = any(role.name == "Owner" for role in message.author.roles)
     
     if not is_staff:
-        if re.search(r'(https?://\S+)', message.content): # מגן קישורים
-            await message.delete()
-            return
-        if any(word in message.content for word in BAD_WORDS): # מגן קללות
+        # הגנה מפני קללות וקישורים למשתמשים רגילים
+        if re.search(r'(https?://\S+)', message.content) or any(word in message.content for word in BAD_WORDS):
             await message.delete()
             return
 
@@ -156,7 +157,7 @@ async def on_message(message):
 
 @bot.event
 async def on_ready():
-    print(f'🛡️ Cyber-Shield Final is Online with Recommendations & Reports.')
+    print(f'🛡️ Cyber-Shield ULTIMATE is Online.')
 
 if TOKEN:
     bot.run(TOKEN)
