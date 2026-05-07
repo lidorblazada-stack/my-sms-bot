@@ -3,16 +3,27 @@ from discord import ui, app_commands
 from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 import os
+import firebase_admin  # חובה להוסיף
+from firebase_admin import credentials, db  # חובה להוסיף
 
 # --- הגדרות ---
-TOKEN = os.getenv('CYBER_SHIELD_TOKEN')
+TOKEN = os.getenv('DISCORD_TOKEN') # שים לב שזה תואם ל-Secret בגיטהאב
+FIREBASE_URL = os.getenv('FIREBASE_URL')
 FEEDBACK_CHANNEL_ID = 1502014872655888554 
 
-# ניהול זמני המתנה (Cooldown) - שומר מתי כל משתמש שלח פידבק לאחרונה
+# --- חיבור לפיירבייס (זה מה שהיה חסר!) ---
+if not firebase_admin._apps:
+    # כאן הבוט קורא את הקובץ שייצרנו ב-GitHub Actions
+    cred = credentials.Certificate("serviceAccountKey.json") 
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': FIREBASE_URL
+    })
+
+# ניהול זמני המתנה (Cooldown)
 feedback_cooldowns = {}
 user_warnings = {}
 
-# --- הגנה: רק רול Owner יכול להשתמש בפקודות ניהול ---
+# --- שאר הקוד שלך ממשיך כאן ---
 def is_owner():
     async def predicate(interaction: discord.Interaction):
         has_role = any(role.name == "Owner" for role in interaction.user.roles)
@@ -22,7 +33,6 @@ def is_owner():
         return False
     return app_commands.check(predicate)
 
-# --- מערכת הפידבק (Modal) ---
 class FeedbackModal(ui.Modal, title='שליחת פידבק לשומר השרת'):
     feedback_msg = ui.TextInput(
         label='מה תרצה לרשום בפידבק?',
@@ -54,7 +64,6 @@ class FeedbackModal(ui.Modal, title='שליחת פידבק לשומר השרת')
         channel = interaction.guild.get_channel(FEEDBACK_CHANNEL_ID)
         if channel:
             await channel.send(embed=embed, view=FeedbackView())
-            # עדכון זמן השליחה האחרון של המשתמש
             feedback_cooldowns[interaction.user.id] = datetime.now()
             await interaction.response.send_message("הפידבק נשלח בהצלחה! 🌟", ephemeral=True)
 
@@ -64,7 +73,6 @@ class FeedbackView(ui.View):
     
     @ui.button(label='שלח פידבק 🌟', style=discord.ButtonStyle.gray, custom_id='persistent:fb_btn')
     async def feedback_button(self, interaction: discord.Interaction, button: ui.Button):
-        # בדיקת Cooldown של 5 דקות
         last_sent = feedback_cooldowns.get(interaction.user.id)
         if last_sent:
             delta = datetime.now() - last_sent
@@ -74,7 +82,6 @@ class FeedbackView(ui.View):
         
         await interaction.response.send_modal(FeedbackModal())
 
-# --- הגדרת הבוט ---
 class CyberShield(commands.Bot):
     def __init__(self):
         intents = discord.Intents.all()
@@ -85,8 +92,6 @@ class CyberShield(commands.Bot):
         await self.tree.sync()
 
 bot = CyberShield()
-
-# --- פקודות ניהול (Owner Only) ---
 
 @bot.tree.command(name="setup_feedback", description="יצירת פאנל פידבק (Owner Only)")
 @is_owner()
