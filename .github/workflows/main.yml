@@ -23,6 +23,7 @@ jobs:
       - name: Start Shield Bot
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          FIREBASE_URL: ${{ secrets.FIREBASE_URL }}
         run: python main.py
 
   run-alt-detector:
@@ -41,7 +42,6 @@ jobs:
 
       - name: Start Alt Detector
         env:
-          # הגדרתי את שתי האופציות כדי שהקוד יזהה את הטוקן בטוח
           TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
           ALT_BOT_TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
         run: python alts.py
