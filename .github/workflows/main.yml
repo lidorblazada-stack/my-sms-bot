@@ -43,4 +43,4 @@ jobs:
       - name: Start Alt Detector
         env:
           DISCORD_TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
-        run: python alt_detector.py
+        run: run:python alts.py
