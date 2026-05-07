@@ -1,15 +1,29 @@
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 import datetime
 import re
 
-# --- הגדרות בוט ---
+# --- הגדרות שרת (תעדכן את ה-ID שלך) ---
 TOKEN = 'YOUR_BOT_TOKEN_HERE'
+OWNER_ROLE_NAME = "Owner"
 LOG_CHANNEL_ID = 1499510962296721568
 WELCOME_CHANNEL_ID = 123456789012345678
 SUGGESTIONS_CHANNEL_ID = 123456789012345678
-STATS_CHANNEL_ID = 123456789012345678 # ערוץ קולי שבו יוצג מספר המשתמשים
+VERIFY_ROLE_ID = 123456789012345678
+
+class VerifyView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="לחץ כאן לאימות ✅", style=discord.ButtonStyle.green, custom_id="verify_button")
+    async def verify(self, interaction: discord.Interaction, button: discord.ui.Button):
+        role = interaction.guild.get_role(VERIFY_ROLE_ID)
+        if role in interaction.user.roles:
+            await interaction.response.send_message("אתה כבר מאומת אחי! 🛡️", ephemeral=True)
+        else:
+            await interaction.user.add_roles(role)
+            await interaction.response.send_message("אומתת בהצלחה! ברוך הבא לשרת הכי חזק במדינה! 🔥", ephemeral=True)
 
 class CyberShield(commands.Bot):
     def __init__(self):
@@ -18,96 +32,82 @@ class CyberShield(commands.Bot):
         self.warnings = {}
 
     async def setup_hook(self):
+        self.add_view(VerifyView())
         await self.tree.sync()
-        self.update_stats.start() # מפעיל את עדכון הסטטיסטיקה
-        print(f"✅ Cyber-Shield V-ULTIMATE מוכן לפעולה!")
+        print(f"🛡️ Cyber-Shield V-FINAL באוויר!")
 
 bot = CyberShield()
 
-# --- פיצ'ר חדש: עדכון סטטיסטיקה אוטומטי ---
-@tasks.loop(minutes=10)
-async def update_stats():
-    channel = bot.get_channel(STATS_CHANNEL_ID)
-    if channel:
-        guild = channel.guild
-        await channel.edit(name=f"👥 משתמשים: {guild.member_count}")
+# בדיקת רול אונר
+def is_owner_role():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if any(role.name == OWNER_ROLE_NAME for role in interaction.user.roles):
+            return True
+        await interaction.response.send_message(f"👑 רק למי שיש רול **{OWNER_ROLE_NAME}** מורשה להשתמש בזה!", ephemeral=True)
+        return False
+    return app_commands.check(predicate)
 
-# --- מערכת Welcome & Leave ---
+# --- אירועים: Welcome & Auto-Mod ---
 @bot.event
 async def on_member_join(member):
-    channel = bot.get_channel(WELCOME_CHANNEL_ID)
-    if channel:
-        embed = discord.Embed(
-            title=f"👋 ברוך הבא ל-{member.guild.name}!",
-            description=f"אהלן {member.mention},\nשמחים שהצטרפת ל**שרת הכי חזק במדינה!** 🔥",
-            color=0x00d4ff
-        )
+    ch = bot.get_channel(WELCOME_CHANNEL_ID)
+    if ch:
+        embed = discord.Embed(title=f"👋 ברוך הבא ל-{member.guild.name}!", description=f"אהלן {member.mention}, הגעת ל**שרת הכי חזק במדינה!** 🔥", color=0x00d4ff)
         embed.set_thumbnail(url=member.display_avatar.url)
-        embed.set_footer(text=f"משתמש מספר {len(member.guild.members)}")
-        await channel.send(embed=embed)
+        await ch.send(embed=embed)
 
-# --- הגנה הרמטית (קישורים, הזמנות וקללות) ---
 @bot.event
 async def on_message(message):
     if message.author.bot: return
-
-    # חסימת הזמנות לשרתים אחרים (Anti-Invite)
-    if "discord.gg/" in message.content.lower() or "discord.com/invite/" in message.content.lower():
+    
+    # חסימת לינקים והזמנות
+    if re.search(r'http[s]?://|discord.gg/', message.content.lower()):
         if not message.author.guild_permissions.manage_messages:
             await message.delete()
-            return await message.channel.send(f"🚫 {message.author.mention}, פרסום שרתים אחרים אסור בהחלט!", delete_after=3)
-
-    # חסימת קישורים כלליים
-    if re.search(r'http[s]?://', message.content):
-        if not message.author.guild_permissions.manage_messages:
-            await message.delete()
-            return await message.channel.send(f"🛡️ {message.author.mention}, אין לשלוח קישורים!", delete_after=3)
+            return await message.channel.send(f"🛡️ {message.author.mention}, אין לשלוח קישורים בשרת!", delete_after=3)
 
     await bot.process_commands(message)
 
-# --- פקודות Slash המנצחות ---
+# --- פקודות אדמין (Owner Only) ---
+@bot.tree.command(name="setup_verify", description="🛠️ הקמת מערכת אימות")
+@is_owner_role()
+async def setup_verify(interaction: discord.Interaction):
+    embed = discord.Embed(title="🔐 אימות משתמשים", description="לחצו על הכפתור למטה כדי לקבל גישה לשרת.", color=0x00ff00)
+    await interaction.channel.send(embed=embed, view=VerifyView())
+    await interaction.response.send_message("המערכת הוקמה!", ephemeral=True)
 
-@bot.tree.command(name="kick", description="👢 העפת משתמש מהשרת")
-@app_commands.checks.has_permissions(kick_members=True)
-async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "לא צויין"):
-    await member.kick(reason=reason)
-    await interaction.response.send_message(f"👢 {member.mention} הועף מהשרת. | סיבה: {reason}")
-
-@bot.tree.command(name="ban", description="🔨 חסימת משתמש מהשרת")
-@app_commands.checks.has_permissions(ban_members=True)
-async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "לא צויין"):
-    await member.ban(reason=reason)
-    await interaction.response.send_message(f"🔨 {member.mention} נחסם לצמיתות. | סיבה: {reason}")
-
-@bot.tree.command(name="mute", description="🔇 השתקת משתמש")
-@app_commands.checks.has_permissions(moderate_members=True)
-async def mute(interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str = "לא צויין"):
-    duration = datetime.timedelta(minutes=minutes)
-    await member.timeout(duration, reason=reason)
-    await interaction.response.send_message(f"🔇 {member.mention} הושתק ל-{minutes} דקות. 🤐")
-
-@bot.tree.command(name="unmute", description="🔊 ביטול השתקה")
-@app_commands.checks.has_permissions(moderate_members=True)
-async def unmute(interaction: discord.Interaction, member: discord.Member):
-    await member.timeout(None)
-    await interaction.response.send_message(f"🔊 השתיקה של {member.mention} בוטלה.")
-
+# --- פקודות ניהול (Moderation) ---
 @bot.tree.command(name="clear", description="🧹 ניקוי צ'אט")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def clear(interaction: discord.Interaction, amount: int):
     await interaction.response.defer(ephemeral=True)
     deleted = await interaction.channel.purge(limit=amount)
-    await interaction.followup.send(f"🧹 ניקיתי {len(deleted)} הודעות!", ephemeral=True)
+    await interaction.followup.send(f"🧹 ניקיתי {len(deleted)} הודעות.", ephemeral=True)
+
+@bot.tree.command(name="warn", description="⚠️ מתן אזהרה")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def warn(interaction: discord.Interaction, member: discord.Member, reason: str = "לא צויין"):
+    uid = str(member.id)
+    bot.warnings[uid] = bot.warnings.get(uid, 0) + 1
+    count = bot.warnings[uid]
+    await interaction.response.send_message(f"⚠️ {member.mention} הוזהר ({count}/5). סיבה: {reason}")
+    if count == 3: await member.timeout(datetime.timedelta(minutes=10), reason="3 אזהרות")
+    elif count >= 5: await member.kick(reason="5 אזהרות")
 
 @bot.tree.command(name="suggest", description="💡 שלח המלצה")
 async def suggest(interaction: discord.Interaction, suggestion: str):
-    channel = bot.get_channel(SUGGESTIONS_CHANNEL_ID)
-    if channel:
+    ch = bot.get_channel(SUGGESTIONS_CHANNEL_ID)
+    if ch:
         embed = discord.Embed(title="💡 המלצה חדשה", description=suggestion, color=0xffaa00)
         embed.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
-        msg = await channel.send(embed=embed)
+        msg = await ch.send(embed=embed)
         await msg.add_reaction("✅")
         await msg.add_reaction("❌")
-        await interaction.response.send_message("✅ נשלח!", ephemeral=True)
+        await interaction.response.send_message("✅ ההמלצה נשלחה!", ephemeral=True)
+
+@bot.tree.command(name="help", description="📜 תפריט עזרה")
+async def help_cmd(interaction: discord.Interaction):
+    embed = discord.Embed(title="🛡️ Cyber-Shield Help", description="`/clear`, `/mute`, `/warn`, `/report`, `/suggest`, `/setup_verify`", color=0x00d4ff)
+    await interaction.response.send_message(embed=embed)
 
 bot.run(TOKEN)
