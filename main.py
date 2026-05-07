@@ -3,31 +3,30 @@ import os
 import re
 from discord.ext import commands
 
-# הגדרות דיסקורד
+# הגדרות
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# IDs של הערוצים שלך
+# IDs של הערוצים
 WELCOME_CH = 1501713652217282591
 REPORT_CH = 1501946934779449505
 REC_CH = 1501947249658429470
 
-# רשימת מילים אסורות
 BAD_WORDS = ["זונה", "שרמוטה", "מניאק", "קוקסינל", "בן זונה", "בת זונה", "נאצי", "הומו", "זין"]
 
 @bot.event
 async def on_ready():
-    print(f'Cyber-Shield IS LIVE! Guarding the server.')
+    print(f'🛡️ Cyber-Shield Pro is ready for action!')
 
-# בדיקה אם המשתמש הוא Owner
+# בדיקת רול Owner
 def is_owner():
     async def predicate(ctx):
         role = discord.utils.get(ctx.author.roles, name="Owner")
         if role: return True
-        await ctx.send("❌ רק ה-**Owner** יכול להשתמש בזה!", delete_after=5)
+        await ctx.send("🚫 **גישה חסומה!** רק משתמש עם רול 👑 **Owner** יכול לבצע זאת.", delete_after=5)
         return False
     return commands.check(predicate)
 
@@ -36,94 +35,90 @@ def is_owner():
 async def on_message(message):
     if message.author.bot: return
     
-    # חריגה ל-Owner
-    is_user_owner = discord.utils.get(message.author.roles, name="Owner")
-    if is_user_owner:
+    owner_role = discord.utils.get(message.author.roles, name="Owner")
+    if owner_role:
         await bot.process_commands(message)
         return
 
-    # חסימת קישורים
     if re.search(r'(https?://[^\s]+)', message.content):
         await message.delete()
-        await message.channel.send(f"{message.author.mention}, קישורים אסורים! ❌", delete_after=3)
+        await message.channel.send(f"⚠️ {message.author.mention}, פרסום קישורים אסור! 🛑", delete_after=4)
         return
 
-    # חסימת קללות
     for word in BAD_WORDS:
         if word in message.content.lower():
             await message.delete()
-            await message.channel.send(f"{message.author.mention}, שמור על שפה נקייה! 🤐", delete_after=3)
+            await message.channel.send(f"🤐 {message.author.mention}, שמור על השפה! 👊", delete_after=4)
             return
 
     await bot.process_commands(message)
 
-# --- מערכת כניסה עם תמונת משתמש ---
+# --- מערכת כניסה מעוצבת עם תמונה ---
 @bot.event
 async def on_member_join(member):
     channel = bot.get_channel(WELCOME_CH)
     if channel:
         embed = discord.Embed(
-            description=f"ברוך הבאה לשרת ספאמר הכי טוב בארץ! 🔥",
+            description=f"🎊 **ברוך הבאה לשרת ספאמר הכי טוב בארץ!** 🔥",
             color=discord.Color.blue()
         )
-        # כאן הקסם: מושך את התמונה של המשתמש שנכנס
         embed.set_thumbnail(url=member.display_avatar.url)
-        await channel.send(content=f"ברוך הבא {member.mention}!", embed=embed)
-
-@bot.event
-async def on_member_remove(member):
-    channel = bot.get_channel(WELCOME_CH)
-    if channel:
-        embed = discord.Embed(title="👋 להתראות", color=discord.Color.red())
-        embed.set_thumbnail(url=member.display_avatar.url)
-        await channel.send(content=f"המשתמש {member.name} עזב אותנו..", embed=embed)
+        embed.set_footer(text="Cyber-Shield Protection 🛡️")
+        await channel.send(content=f"👋 **שלום {member.mention}, תהנה מהשרת!**", embed=embed)
 
 # --- פקודות ניהול (Owner Only) ---
 
 @bot.command()
 @is_owner()
-async def clear(ctx, amount: int):
-    """מנקה הודעות בצ'אט"""
-    await ctx.channel.purge(limit=amount + 1)
-    await ctx.send(f"ניקיתי {amount} הודעות! 🧹", delete_after=5)
+async def mute(ctx, member: discord.Member):
+    """משתיק משתמש עם הרול הכולל אימוג'י"""
+    muted_role = discord.utils.get(ctx.guild.roles, name="Muted 🔇")
+    owner_role = discord.utils.get(ctx.guild.roles, name="Owner")
+    
+    if muted_role:
+        await member.add_roles(muted_role)
+        await ctx.send(f"🔇 המשתמש {member.mention} הושתק על ידי {owner_role.mention if owner_role else 'ה-Owner'} 👑")
+    else:
+        await ctx.send("❌ **שגיאה:** לא מצאתי רול בשם `Muted 🔇`. תוודא שיצרת אותו בדיוק ככה!")
 
 @bot.command()
 @is_owner()
-async def kick(ctx, member: discord.Member, *, reason="ללא סיבה"):
-    await member.kick(reason=reason)
-    await ctx.send(f"המשתמש {member.name} נזרק מהשרת! 👞")
+async def unmute(ctx, member: discord.Member):
+    """מסיר השתקה"""
+    muted_role = discord.utils.get(ctx.guild.roles, name="Muted 🔇")
+    if muted_role:
+        await member.remove_roles(muted_role)
+        await ctx.send(f"🔊 ההשתקה של {member.mention} הוסרה! אפשר לחזור לדבר. ✅")
 
 @bot.command()
 @is_owner()
 async def ban(ctx, member: discord.Member, *, reason="ללא סיבה"):
+    owner_role = discord.utils.get(ctx.guild.roles, name="Owner")
     await member.ban(reason=reason)
-    await ctx.send(f"המשתמש {member.name} קיבל באן! 🔨")
+    await ctx.send(f"🔨 **באן בוצע!** על ידי {owner_role.mention if owner_role else 'ה-Owner'} 👑")
 
 @bot.command()
 @is_owner()
-async def mute(ctx, member: discord.Member):
-    """משתיק משתמש (דורש רול בשם Muted)"""
-    role = discord.utils.get(ctx.guild.roles, name="Muted")
-    await member.add_roles(role)
-    await ctx.send(f"{member.mention} הושתק! 🤐")
+async def clear(ctx, amount: int):
+    await ctx.channel.purge(limit=amount + 1)
+    await ctx.send(f"🧹 הצ'אט נוקה על ידי 👑 **ה-Owner**.", delete_after=5)
 
-# --- מערכת דיווחים והמלצות ---
+# --- פקודות קהילה ---
 
 @bot.command()
 async def report(ctx, member: discord.Member, *, reason):
     channel = bot.get_channel(REPORT_CH)
-    embed = discord.Embed(title="דיווח חדש! ⚠️", color=discord.Color.red())
-    embed.add_field(name="מדווח:", value=ctx.author.mention)
-    embed.add_field(name="על המשתמש:", value=member.mention)
-    embed.add_field(name="סיבה:", value=reason)
+    embed = discord.Embed(title="🚨 דיווח חדש!", color=discord.Color.red())
+    embed.add_field(name="חשוד:", value=member.mention)
+    embed.add_field(name="סיבה:", value=f"**{reason}**")
     await channel.send(embed=embed)
     await ctx.message.delete()
 
 @bot.command()
 async def recommend(ctx, *, text):
     channel = bot.get_channel(REC_CH)
-    embed = discord.Embed(title="המלצה חדשה! ⭐", description=text, color=discord.Color.gold())
-    embed.set_footer(text=f"נשלח על ידי: {ctx.author.name}")
+    embed = discord.Embed(title="💎 המלצה זהב", description=f"**{text}**", color=discord.Color.gold())
+    embed.set_author(name=ctx.author.name, icon_url=ctx.author.display_avatar.url)
     await channel.send(embed=embed)
     await ctx.message.delete()
 
