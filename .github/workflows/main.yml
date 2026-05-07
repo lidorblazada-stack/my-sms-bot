@@ -22,7 +22,7 @@ jobs:
 
       - name: Start Shield Bot
         env:
-          # כאן התיקון - הוא מושך את הטוקן מהשם הנכון ב-Secrets שלך
+          # משתמש בטוקן של הסייבר שילד מה-Secrets שלך
           DISCORD_TOKEN: ${{ secrets.CYBER_SHIELD_TOKEN }}
         run: python main.py
 
@@ -42,5 +42,6 @@ jobs:
 
       - name: Start Alt Detector
         env:
+          # משתמש בטוקן של בוט האלטים מה-Secrets שלך
           DISCORD_TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
-        run: run:python alts.py
+        run: python alts.py
