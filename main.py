@@ -1,174 +1,87 @@
 import discord
-from discord import app_commands
+from discord import ui, app_commands
 from discord.ext import commands
-import datetime
-import re
+from datetime import datetime, timezone
 import os
-import asyncio
 
-# --- הגדרות IDs סופיות ---
-TOKEN = os.getenv('DISCORD_TOKEN')
-OWNER_ROLE_NAME = "Owner"
-VERIFY_ROLE_ID = 1501983948111352091 
-WELCOME_CHANNEL_ID = 1501713652217282591
-REPORT_CHANNEL_ID = 1499510962296721568
-SUGGESTIONS_CHANNEL_ID = 1501946934779449505
+# --- הגדרות ---
+TOKEN = os.getenv('CYBER_SHIELD_TOKEN')
+FEEDBACK_CHANNEL_ID = 1502014872655888554 # הערוץ שבו הפידבקים יפורסמו
 
-# רשימת מילים אסורות (תוסיף עוד בכיף)
-BAD_WORDS = ["בן זונה", "שרמוטה", "מניאק", "קוקסינל", "נאצי", "זונה", "כושלאמאשלך"]
+# --- המודאל (החלונית שנפתחת) ---
+class FeedbackModal(ui.Modal, title='שליחת פידבק'):
+    feedback_msg = ui.TextInput(
+        label='מה תרצה לרשום בפידבק?',
+        placeholder='כתוב כאן את דעתך על השרת...',
+        style=discord.TextStyle.long,
+        required=True,
+        max_length=1000
+    )
+    
+    anonymous = ui.TextInput(
+        label='לשלוח באנונימיות? (כן/לא)',
+        placeholder='כן = Anonymous User | לא = השם שלך',
+        min_length=2,
+        max_length=2,
+        required=True
+    )
 
-class VerifyView(discord.ui.View):
+    async def on_submit(self, interaction: discord.Interaction):
+        is_anon = self.anonymous.value.strip() == "כן"
+        
+        embed = discord.Embed(
+            description=f"💬 **New Feedback**\n\n{self.feedback_msg.value}",
+            color=0x2f3136, # צבע כהה כמו בדיסקורד
+            timestamp=datetime.now(timezone.utc)
+        )
+
+        if is_anon:
+            embed.set_author(name="Anonymous User", icon_url="https://i.imgur.com/8fS0S9G.png")
+        else:
+            embed.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
+
+        channel = interaction.guild.get_channel(FEEDBACK_CHANNEL_ID)
+        if channel:
+            # שליחת הפידבק לערוץ
+            await channel.send(embed=embed)
+            await interaction.response.send_message("הפידבק שלך נשלח! תודה ❤️", ephemeral=True)
+
+# --- הכפתור שמופיע מתחת להודעה ---
+class FeedbackView(ui.View):
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(timeout=None) # הכפתור לא יפסיק לעבוד
 
-    @discord.ui.button(label="לחץ כאן לאימות ✅", style=discord.ButtonStyle.green, custom_id="verify_button")
-    async def verify(self, interaction: discord.Interaction, button: discord.ui.Button):
-        role = interaction.guild.get_role(VERIFY_ROLE_ID)
-        if role is None:
-            return await interaction.response.send_message(f"❌ שגיאה: רול האימות לא נמצא!", ephemeral=True)
-            
-        try:
-            if role in interaction.user.roles:
-                await interaction.response.send_message("אתה כבר מאומת אחי! 🛡️", ephemeral=True)
-            else:
-                await interaction.user.add_roles(role)
-                await interaction.response.send_message("אומתת בהצלחה! ברוך הבא למבצר של Cyber-Shield! 🔥", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.response.send_message("❌ אין לי סמכות! תעלה את הרול 'Cyber-Shield-App' לראש הרשימה בשרת!", ephemeral=True)
+    @ui.button(label='שלח פידבק 🌟', style=discord.ButtonStyle.gray, custom_id='persistent_view:feedback')
+    async def feedback_button(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_modal(FeedbackModal())
 
+# --- הגדרת הבוט ---
 class CyberShield(commands.Bot):
     def __init__(self):
         intents = discord.Intents.all()
         super().__init__(command_prefix="!", intents=intents)
-        self.warnings = {}
 
     async def setup_hook(self):
-        self.add_view(VerifyView())
+        # גורם לכפתור להמשיך לעבוד גם אחרי שהבוט עובר הפעלה מחדש
+        self.add_view(FeedbackView())
         await self.tree.sync()
-        print("🛡️ Cyber-Shield GOD MODE: ONLINE!")
 
 bot = CyberShield()
 
-# --- בדיקות והגנות ---
-def is_owner():
-    async def predicate(interaction: discord.Interaction) -> bool:
-        if any(role.name == OWNER_ROLE_NAME for role in interaction.user.roles):
-            return True
-        await interaction.response.send_message("👑 פקודה זו נעולה לאונר בלבד!", ephemeral=True)
-        return False
-    return app_commands.check(predicate)
-
-async def auto_warn(member, reason, channel):
-    uid = str(member.id)
-    bot.warnings[uid] = bot.warnings.get(uid, 0) + 1
-    count = bot.warnings[uid]
-    
-    embed = discord.Embed(title="⚠️ אזהרה אוטומטית", color=0xff0000)
-    embed.add_field(name="משתמש", value=member.mention)
-    embed.add_field(name="סיבה", value=reason)
-    embed.add_field(name="מצב", value=f"{count}/5")
-    await channel.send(embed=embed)
-
-    if count == 3:
-        await member.timeout(datetime.timedelta(minutes=30), reason="צבירת 3 אזהרות")
-        await channel.send(f"🔇 {member.mention} הושתק ל-30 דקות.")
-    elif count >= 5:
-        await member.kick(reason="צבירת 5 אזהרות")
-        await channel.send(f"👞 {member.mention} הועף מהשרת!")
-
-# --- אירועים ---
 @bot.event
-async def on_member_join(member):
-    ch = bot.get_channel(WELCOME_CHANNEL_ID)
-    if ch:
-        embed = discord.Embed(title="👋 ברוך הבא למבצר!", description=f"אהלן {member.mention}, הגעת לשרת הכי חזק במדינה! 🔥", color=0x00d4ff)
-        embed.set_thumbnail(url=member.display_avatar.url)
-        await ch.send(embed=embed)
+async def on_ready():
+    print(f'🛡️ Cyber-Shield is ready with the Feedback Panel!')
 
-@bot.event
-async def on_message(message):
-    if message.author.bot: return
-    
-    # סינון קללות
-    if any(word in message.content.lower() for word in BAD_WORDS):
-        await message.delete()
-        await auto_warn(message.author, "שימוש בשפה אסורה", message.channel)
-        return
-
-    # סינון לינקים
-    if re.search(r'http[s]?://|discord.gg/', message.content.lower()):
-        if not message.author.guild_permissions.manage_messages:
-            await message.delete()
-            await auto_warn(message.author, "שליחת לינקים ללא אישור", message.channel)
-            return
-
-    await bot.process_commands(message)
-
-# --- פקודות סלאש (המפלצת) ---
-
-@bot.tree.command(name="setup_verify", description="🛠️ הקמת אימות (אונר)")
-@is_owner()
-async def setup_verify(interaction: discord.Interaction):
-    embed = discord.Embed(title="🔐 אימות כניסה", description="לחץ למטה כדי להיכנס למבצר.", color=0x2f3136)
-    await interaction.channel.send(embed=embed, view=VerifyView())
-    await interaction.response.send_message("הוקם!", ephemeral=True)
-
-@bot.tree.command(name="report", description="🚨 דווח על משתמש")
-async def report(interaction: discord.Interaction, member: discord.Member, reason: str):
-    log_ch = bot.get_channel(REPORT_CHANNEL_ID)
-    if log_ch:
-        embed = discord.Embed(title="🚨 דיווח חדש", color=0xff0000)
-        embed.add_field(name="חשוד", value=member.mention)
-        embed.add_field(name="מדווח", value=interaction.user.mention)
-        embed.add_field(name="סיבה", value=reason)
-        await log_ch.send(embed=embed)
-        await interaction.response.send_message("הדיווח התקבל! 🚓", ephemeral=True)
-
-@bot.tree.command(name="suggest", description="💡 שלח המלצה")
-async def suggest(interaction: discord.Interaction, idea: str):
-    sug_ch = bot.get_channel(SUGGESTIONS_CHANNEL_ID)
-    if sug_ch:
-        embed = discord.Embed(title="💡 המלצה חדשה", description=idea, color=0xffff00)
-        msg = await sug_ch.send(embed=embed)
-        await msg.add_reaction("✅")
-        await msg.add_reaction("❌")
-        await interaction.response.send_message("תודה על ההמלצה!", ephemeral=True)
-
-@bot.tree.command(name="clear", description="🧹 ניקוי הודעות")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def clear(interaction: discord.Interaction, amount: int):
-    await interaction.response.defer(ephemeral=True)
-    deleted = await interaction.channel.purge(limit=amount)
-    await interaction.followup.send(f"ניקיתי {len(deleted)} הודעות. ✨", ephemeral=True)
-
-@bot.tree.command(name="user_info", description="👤 מידע על משתמש")
-async def user_info(interaction: discord.Interaction, member: discord.Member = None):
-    member = member or interaction.user
-    embed = discord.Embed(title=f"מידע על {member.name}", color=member.color)
-    embed.add_field(name="הצטרף לשרת", value=member.joined_at.strftime("%d/%m/%Y"))
-    embed.add_field(name="רול הכי גבוה", value=member.top_role.mention)
-    embed.set_thumbnail(url=member.display_avatar.url)
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="server_info", description="📊 מידע על השרת")
-async def server_info(interaction: discord.Interaction):
-    guild = interaction.guild
-    embed = discord.Embed(title=f"סטטיסטיקה של {guild.name}", color=0x00ff00)
-    embed.add_field(name="מספר חברים", value=guild.member_count)
-    embed.add_field(name="רולים", value=len(guild.roles))
-    embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="warn_manual", description="⚠️ מתן אזהרה ידנית")
-@app_commands.checks.has_permissions(moderate_members=True)
-async def warn_manual(interaction: discord.Interaction, member: discord.Member, reason: str):
-    await auto_warn(member, reason, interaction.channel)
-    await interaction.response.send_message(f"האזהרה נרשמה ל-{member.mention}.", ephemeral=True)
-
-@bot.tree.command(name="nick", description="🏷️ שינוי כינוי למשתמש")
-@app_commands.checks.has_permissions(manage_nicknames=True)
-async def nick(interaction: discord.Interaction, member: discord.Member, new_nick: str):
-    await member.edit(nick=new_nick)
-    await interaction.response.send_message(f"הכינוי של {member.mention} שונה ל-{new_nick}!", ephemeral=True)
+# --- פקודה ליצירת הפאנל (מריצים פעם אחת בערוץ הפידבק) ---
+@bot.tree.command(name="setup_feedback", description="יוצר את הודעת הפידבק עם הכפתור")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_feedback(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="💎 מערכת פידבק",
+        description="לחצו על הכפתור למטה כדי לשתף את החוויה שלכם בשרת!\nניתן לשלוח פידבק אנונימי או גלוי.",
+        color=0xFFD700
+    )
+    await interaction.channel.send(embed=embed, view=FeedbackView())
+    await interaction.response.send_message("הפאנל נוצר בהצלחה!", ephemeral=True)
 
 bot.run(TOKEN)
