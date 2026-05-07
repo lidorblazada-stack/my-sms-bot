@@ -7,11 +7,12 @@ import re
 import firebase_admin
 from firebase_admin import credentials, db
 
-# --- הגדרות ---
+# --- הגדרות ערוצים ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 FIREBASE_URL = os.getenv('FIREBASE_URL')
 FEEDBACK_CHANNEL_ID = 1502028905253699735 
-LOG_CHANNEL_ID = 1499510962296721568 
+RECOMMEND_CHANNEL_ID = 1501947249658429470 # ערוץ המלצות
+REPORT_CHANNEL_ID = 1501946934779449505    # ערוץ רפורט
 
 BAD_WORDS = ["כוסאמק", "זונה", "מניאק", "שרמוטה", "נאצי"] 
 
@@ -22,12 +23,12 @@ if not firebase_admin._apps:
 
 invites = {}
 
-# --- הגנה: פונקציה שבודקת רק רול Owner ---
+# --- הגנה: רק Owner ---
 def is_owner():
     async def predicate(interaction: discord.Interaction):
         has_role = any(role.name == "Owner" for role in interaction.user.roles)
         if has_role: return True
-        await interaction.response.send_message("❌ פקודה זו שמורה ל-**Owner** בלבד!", ephemeral=True)
+        await interaction.response.send_message("❌ פקודה זו ל-**Owner** בלבד!", ephemeral=True)
         return False
     return app_commands.check(predicate)
 
@@ -63,9 +64,9 @@ class CyberShield(commands.Bot):
 
 bot = CyberShield()
 
-# --- פקודות ניהול (כולן מוגנות ב-Owner) ---
+# --- פקודות ניהול (Owner Only) ---
 
-@bot.tree.command(name="warn", description="מתן אזהרה (Owner Only)")
+@bot.tree.command(name="warn", description="מתן אזהרה")
 @is_owner()
 async def warn(interaction: discord.Interaction, member: discord.Member, reason: str = "ללא סיבה"):
     ref = db.reference(f'users/{member.id}/warnings')
@@ -74,14 +75,14 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
     msg = f"⚠️ {member.mention} הוזהר ({w}/5). סיבה: {reason}"
     if w == 3:
         await member.timeout(timedelta(hours=1))
-        msg += "\n🔇 הושם במיוט לשעה."
+        msg += "\n🔇 מיוט לשעה."
     elif w >= 5:
         await member.kick(reason="5 אזהרות")
         msg += "\n👢 הוצא מהשרת."
         ref.set(0)
     await interaction.response.send_message(msg)
 
-@bot.tree.command(name="unwarn", description="הורדת אזהרה (Owner Only)")
+@bot.tree.command(name="unwarn", description="הורדת אזהרה")
 @is_owner()
 async def unwarn(interaction: discord.Interaction, member: discord.Member):
     ref = db.reference(f'users/{member.id}/warnings')
@@ -89,62 +90,53 @@ async def unwarn(interaction: discord.Interaction, member: discord.Member):
     ref.set(w)
     await interaction.response.send_message(f"✅ הורדה אזהרה ל-{member.mention}. מצב: {w}/5")
 
-@bot.tree.command(name="blacklist_add", description="חסימת ID מהשרת (Owner Only)")
+@bot.tree.command(name="blacklist_add", description="חסימת ID")
 @is_owner()
 async def blacklist_add(interaction: discord.Interaction, user_id: str):
     db.reference(f'blacklist/{user_id}').set(True)
-    await interaction.response.send_message(f"🚫 {user_id} נחסם מהשרת.")
+    await interaction.response.send_message(f"🚫 {user_id} נחסם.")
 
-@bot.tree.command(name="blacklist_remove", description="הסרת ID מחסימה (Owner Only)")
-@is_owner()
-async def blacklist_remove(interaction: discord.Interaction, user_id: str):
-    db.reference(f'blacklist/{user_id}').delete()
-    await interaction.response.send_message(f"✅ {user_id} הוסר מהחסימה.")
-
-@bot.tree.command(name="setup_feedback", description="הצבת פאנל פידבק (Owner Only)")
+@bot.tree.command(name="setup_feedback", description="פאנל פידבק")
 @is_owner()
 async def setup_feedback(interaction: discord.Interaction):
-    embed = discord.Embed(title="『💎』 פאנל פידבק שומר השרת", description="לחצו למטה כדי לשתף פידבק!", color=0x2b2d31)
+    embed = discord.Embed(title="『💎』 פאנל פידבק", description="שתפו אותנו בדעתכם!", color=0x2b2d31)
     await interaction.channel.send(embed=embed, view=FeedbackView())
-    await interaction.response.send_message("הפאנל נוצר בהצלחה!", ephemeral=True)
+    await interaction.response.send_message("נוצר.", ephemeral=True)
 
-@bot.tree.command(name="report", description="דיווח על משתמש")
+# --- פקודות משתמשים (דיווח והמלצה) ---
+
+@bot.tree.command(name="report", description="דיווח על משתמש בעייתי")
 async def report(interaction: discord.Interaction, member: discord.Member, reason: str):
-    log_ch = bot.get_channel(LOG_CHANNEL_ID)
-    embed = discord.Embed(title="🚨 דיווח חדש", color=0xff0000)
-    embed.add_field(name="מדווח:", value=interaction.user.mention)
-    embed.add_field(name="נדון:", value=member.mention)
+    channel = bot.get_channel(REPORT_CHANNEL_ID)
+    embed = discord.Embed(title="🚨 דיווח משתמש חדש", color=0xff0000, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="המדווח:", value=interaction.user.mention)
+    embed.add_field(name="המשתמש הבעייתי:", value=member.mention)
     embed.add_field(name="סיבה:", value=reason)
-    if log_ch: await log_ch.send(embed=embed)
-    await interaction.response.send_message("הדיווח התקבל.", ephemeral=True)
+    if channel: await channel.send(embed=embed)
+    await interaction.response.send_message("הדיווח נשלח לצוות לבדיקה.", ephemeral=True)
 
-# --- אירועים והגנות אוטומטיות ---
+@bot.tree.command(name="recommend", description="שלח המלצה על השרת")
+async def recommend(interaction: discord.Interaction, text: str):
+    channel = bot.get_channel(RECOMMEND_CHANNEL_ID)
+    embed = discord.Embed(title="⭐️ המלצה חדשה!", description=text, color=0xf1c40f, timestamp=datetime.now(timezone.utc))
+    embed.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
+    if channel: await channel.send(embed=embed)
+    await interaction.response.send_message("תודה על ההמלצה שלך! ✨", ephemeral=True)
 
-@bot.event
-async def on_ready():
-    for guild in bot.guilds:
-        invites[guild.id] = await guild.invites()
-    print(f'🛡️ Cyber-Shield ULTIMATE is Online.')
+# --- אירועים והגנות ---
 
 @bot.event
 async def on_member_join(member):
+    # בדיקת בלאקליסט
     if db.reference(f'blacklist/{member.id}').get():
         await member.kick(reason="Blacklisted")
         return
     
-    # Invite Tracker
-    invs_before = invites.get(member.guild.id, [])
-    invs_after = await member.guild.invites()
-    for invite in invs_before:
-        for new_invite in invs_after:
-            if invite.code == new_invite.code and invite.uses < new_invite.uses:
-                ref = db.reference(f'users/{invite.inviter.id}/credits')
-                ref.set((ref.get() or 0) + 3)
-    invites[member.guild.id] = invs_after
-
+    # הודעת וולקם
     ch = member.guild.system_channel
     if ch:
-        embed = discord.Embed(title="הגעת לשרת החזק במדינה! 🔥", description=f"{member.mention}, ברוך הבא!", color=0x2ecc71)
+        embed = discord.Embed(title="ברוך הבא לשרת החזק במדינה! 🔥", description=f"{member.mention}, שמחים שבאת!", color=0x2ecc71)
+        embed.set_thumbnail(url=member.display_avatar.url)
         await ch.send(embed=embed)
 
 @bot.event
@@ -153,16 +145,18 @@ async def on_message(message):
     is_staff = any(role.name == "Owner" for role in message.author.roles)
     
     if not is_staff:
-        # מגן קישורים
-        if re.search(r'(https?://\S+)', message.content):
+        if re.search(r'(https?://\S+)', message.content): # מגן קישורים
             await message.delete()
             return
-        # מגן קללות
-        if any(word in message.content for word in BAD_WORDS):
+        if any(word in message.content for word in BAD_WORDS): # מגן קללות
             await message.delete()
             return
 
     await bot.process_commands(message)
+
+@bot.event
+async def on_ready():
+    print(f'🛡️ Cyber-Shield Final is Online with Recommendations & Reports.')
 
 if TOKEN:
     bot.run(TOKEN)
