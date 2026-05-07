@@ -6,7 +6,7 @@ import os
 
 TOKEN = os.getenv('CYBER_SHIELD_TOKEN')
 # הערוץ שבו הפידבקים יפורסמו (תחליף ל-ID של ערוץ הפידבק שלך)
-FEEDBACK_CHANNEL_ID = 1502014872655888554 
+FEEDBACK_CHANNEL_ID = 1502028905253699735 
 
 # הגנה קשיחה: רק רול בשם "Owner" עובר
 def is_strictly_owner():
