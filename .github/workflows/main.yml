@@ -23,12 +23,11 @@ jobs:
       - name: Create Firebase JSON
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > serviceAccountKey.json
 
-      - name: Start Bots
+      - name: Start Both Bots
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           FIREBASE_URL: ${{ secrets.FIREBASE_URL }}
           ALT_BOT_TOKEN: ${{ secrets.ALT_BOT_TOKEN }}
         run: |
-          python alts.py & 
-          sleep 5
-          python main.py
+          # מריץ את שניהם יחד ומוודא שהלוגים משולבים
+          python alts.py & python main.py
