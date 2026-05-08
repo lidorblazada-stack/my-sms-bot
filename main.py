@@ -9,7 +9,7 @@ from firebase_admin import credentials, db
 from collections import defaultdict
 
 # --- הגדרות - הותאם למשתנה שלך ב-Railway ---
-TOKEN = os.getenv('ALT_BOT_TOKEN') 
+TOKEN = os.getenv('DISCORD_TOKEN') 
 FIREBASE_URL = os.getenv('FIREBASE_URL')
 LOG_CHANNEL_ID = 1499510962296721568 
 
