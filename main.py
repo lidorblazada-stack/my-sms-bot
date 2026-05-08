@@ -7,7 +7,6 @@ import re
 import firebase_admin
 from firebase_admin import credentials, db
 from collections import defaultdict
-import random
 
 # --- הגדרות ערוצים ---
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -25,9 +24,8 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_URL})
 
 # --- משתני מערכת בזיכרון ---
-message_counts = defaultdict(list) 
-nuke_monitoring = defaultdict(list)
-join_monitoring = [] # למערכת Anti-Raid
+message_counts = defaultdict(list) # לאנטי-ספאם
+nuke_monitoring = defaultdict(list) # לאנטי-ניוק
 
 # --- הגנה: רק Owner ---
 def is_owner():
@@ -38,7 +36,7 @@ def is_owner():
         return False
     return app_commands.check(predicate)
 
-# --- תצוגות (Views) ---
+# --- מערכת פידבק ---
 class FeedbackModal(ui.Modal, title='שליחת פידבק'):
     feedback_msg = ui.TextInput(label='מה תרצה לרשום?', style=discord.TextStyle.long, required=True)
     async def on_submit(self, interaction: discord.Interaction):
@@ -65,37 +63,13 @@ class CyberShield(commands.Bot):
 
 bot = CyberShield()
 
-# --- פקודות כלכלה ורמות ---
-
-@bot.tree.command(name="rank", description="בדיקת הרמה שלך בשרת")
-async def rank(interaction: discord.Interaction, member: discord.Member = None):
-    m = member or interaction.user
-    data = db.reference(f'users/{m.id}/leveling').get() or {"xp": 0, "level": 1}
-    embed = discord.Embed(title=f"📊 סטטיסטיקות: {m.display_name}", color=0x2ecc71)
-    embed.add_field(name="רמה", value=data['level'], inline=True)
-    embed.add_field(name="XP", value=f"{data['xp']}/{data['level']*150}", inline=True)
-    embed.set_thumbnail(url=m.display_avatar.url)
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="balance", description="בדיקת כמות המטבעות שלך")
-async def balance(interaction: discord.Interaction):
-    coins = db.reference(f'users/{interaction.user.id}/coins').get() or 0
-    await interaction.response.send_message(f"💰 יש לך **{coins}** מטבעות סייבר.")
-
-@bot.tree.command(name="work", description="עבודה כדי להרוויח כסף")
-async def work(interaction: discord.Interaction):
-    last_work = db.reference(f'users/{interaction.user.id}/last_work').get()
-    now = datetime.now().timestamp()
-    if last_work and now - last_work < 3600:
-        return await interaction.response.send_message("⏳ תוכל לעבוד שוב בעוד כשעה.", ephemeral=True)
-    
-    reward = random.randint(50, 200)
-    ref = db.reference(f'users/{interaction.user.id}/coins')
-    ref.set((ref.get() or 0) + reward)
-    db.reference(f'users/{interaction.user.id}/last_work').set(now)
-    await interaction.response.send_message(f"🛠️ עבדת קשה והרווחת **{reward}** מטבעות!")
-
 # --- פקודות ניהול והגנה ---
+
+@bot.tree.command(name="warnings", description="בדיקת אזהרות של משתמש")
+async def warnings(interaction: discord.Interaction, member: discord.Member = None):
+    m = member or interaction.user
+    w = db.reference(f'users/{m.id}/warnings').get() or 0
+    await interaction.response.send_message(f"📋 למשתמש {m.mention} יש **{w}/5** אזהרות.")
 
 @bot.tree.command(name="clear", description="ניקוי הודעות")
 @is_owner()
@@ -117,11 +91,11 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
     else:
         await interaction.response.send_message(f"⚠️ {member.mention} הוזהר ({w}/5). סיבה: {reason}")
 
-@bot.tree.command(name="warnings", description="בדיקת אזהרות")
-async def warnings(interaction: discord.Interaction, member: discord.Member = None):
-    m = member or interaction.user
-    w = db.reference(f'users/{m.id}/warnings').get() or 0
-    await interaction.response.send_message(f"📋 למשתמש {m.mention} יש **{w}/5** אזהרות.")
+@bot.tree.command(name="mute", description="השתקת משתמש")
+@is_owner()
+async def mute(interaction: discord.Interaction, member: discord.Member, minutes: int):
+    await member.timeout(timedelta(minutes=minutes))
+    await interaction.response.send_message(f"🔇 {member.mention} הושתק ל-{minutes} דקות.")
 
 # --- אירועי מערכת (Events) ---
 
@@ -129,19 +103,19 @@ async def warnings(interaction: discord.Interaction, member: discord.Member = No
 async def on_message(message):
     if message.author.bot: return
     
-    # 1. מערכת XP ורמות
-    ref = db.reference(f'users/{message.author.id}/leveling')
-    d = ref.get() or {"xp": 0, "level": 1}
-    d['xp'] += random.randint(5, 15)
-    if d['xp'] >= (d['level'] * 150):
-        d['level'] += 1
-        d['xp'] = 0
-        await message.channel.send(f"🎊 {message.author.mention} עלה לרמה **{d['level']}**! כבוד!")
-    ref.set(d)
-
-    # 2. סינון תוכן (מילים רעות וקישורים)
     is_staff = any(role.name == "Owner" for role in message.author.roles)
+    
     if not is_staff:
+        # 1. אנטי-ספאם (נשאר לבקשתך!)
+        now = datetime.now()
+        message_counts[message.author.id].append(now)
+        message_counts[message.author.id] = [t for t in message_counts[message.author.id] if (now - t).total_seconds() < 3]
+        if len(message_counts[message.author.id]) > 5:
+            await message.author.timeout(timedelta(minutes=10), reason="Spamming")
+            await message.channel.send(f"🔇 {message.author.mention} הושתקת ל-10 דקות עקב ספאם.")
+            return
+
+        # 2. סינון תוכן (מילים רעות וקישורים)
         if any(w in message.content for w in BAD_WORDS) or re.search(r'(https?://\S+|discord\.gg/\S+)', message.content):
             await message.delete()
             return
@@ -163,7 +137,6 @@ async def on_message_delete(message):
 async def on_guild_channel_delete(channel):
     async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
         if entry.user.id == channel.guild.owner_id: return
-        # Anti-Nuke logic
         user_id = entry.user.id
         now = datetime.now()
         nuke_monitoring[user_id].append(now)
@@ -178,26 +151,14 @@ async def on_guild_channel_delete(channel):
 
 @bot.event
 async def on_member_join(member):
-    # 1. Anti-Raid
-    now = datetime.now()
-    join_monitoring.append(now)
-    # שמירה רק על 10 שניות אחרונות
-    global join_monitoring
-    join_monitoring = [t for t in join_monitoring if (now - t).total_seconds() < 10]
-    if len(join_monitoring) > 5: # יותר מ-5 אנשים ב-10 שניות
-        log = bot.get_channel(LOG_CHANNEL_ID)
-        if log: await log.send("🚨 **מצב Raid זוהה!** השרת ננעל זמנית.")
-        # כאן אפשר להוסיף פקודה לנעילת השרת (Verification Level)
-    
-    # 2. הודעת ברוך הבא
+    # הודעת ברוך הבא פשוטה
     ch = member.guild.system_channel
     if ch:
-        embed = discord.Embed(title=f"ברוך הבא {member.name}! 🔥", description="שמחים שבאת לשרת שלנו. קרא חוקים ותהנה!", color=0x2ecc71)
-        embed.set_thumbnail(url=member.display_avatar.url)
+        embed = discord.Embed(title=f"ברוך הבא {member.name}! 🔥", description="שמחים שבאת לשרת. קרא חוקים ותהנה!", color=0x2ecc71)
         await ch.send(embed=embed)
 
 @bot.event
 async def on_ready():
-    print(f'🛡️ CYBER-SHIELD ULTIMATE V3 ONLINE.')
+    print(f'🛡️ CYBER-SHIELD V5 ONLINE (Anti-Spam ON | Economy OFF).')
 
 if TOKEN: bot.run(TOKEN)
