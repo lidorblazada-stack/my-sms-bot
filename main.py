@@ -1,4 +1,3 @@
-
 import discord
 from discord import ui, app_commands
 from discord.ext import commands
@@ -14,7 +13,7 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 FIREBASE_URL = os.getenv('FIREBASE_URL')
 FEEDBACK_CHANNEL_ID = 1502028905253699735 
 RECOMMEND_CHANNEL_ID = 1501947249658429470 
-REPORT_CHANNEL_ID = 1501946934779449505    
+REPORT_CHANNEL_ID = 1501946934779449505      
 LOG_CHANNEL_ID = 1499510962296721568 
 
 BAD_WORDS = ["כוסאמק", "זונה", "מניאק", "שרמוטה", "נאצי", "בן זונה"] 
@@ -25,7 +24,8 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_URL})
 
 feedback_cooldowns = {}
-message_counts = defaultdict(list) # למערכת האנטי-ספאם
+message_counts = defaultdict(list) 
+nuke_monitoring = defaultdict(list) # למערכת ה-Anti-Nuke
 
 # --- הגנה: רק Owner ---
 def is_owner():
@@ -36,7 +36,7 @@ def is_owner():
         return False
     return app_commands.check(predicate)
 
-# --- מערכת פידבק (5 דקות המתנה) ---
+# --- מערכת פידבק ---
 class FeedbackModal(ui.Modal, title='שליחת פידבק לשומר השרת'):
     feedback_msg = ui.TextInput(label='מה תרצה לרשום?', style=discord.TextStyle.long, required=True)
     anonymous = ui.TextInput(label='אנונימי? (כן/לא)', min_length=2, max_length=2, required=True)
@@ -72,7 +72,24 @@ class CyberShield(commands.Bot):
 
 bot = CyberShield()
 
-# --- פקודות ניהול (Owner Only) ---
+# --- פקודות ניהול חדשות (שלב 3) ---
+
+@bot.tree.command(name="clear", description="מחיקת הודעות בצ'אט")
+@is_owner()
+async def clear(interaction: discord.Interaction, amount: int):
+    if amount > 100: amount = 100
+    await interaction.response.defer(ephemeral=True)
+    deleted = await interaction.channel.purge(limit=amount)
+    await interaction.followup.send(f"🧹 ניקיתי {len(deleted)} הודעות!", ephemeral=True)
+
+@bot.tree.command(name="timeout", description="השתקת משתמש (בזמן)")
+@is_owner()
+async def timeout(interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str = "לא צוין"):
+    duration = timedelta(minutes=minutes)
+    await member.timeout(duration, reason=reason)
+    await interaction.response.send_message(f"🔇 {member.mention} הושתק ל-{minutes} דקות. סיבה: {reason}")
+
+# --- פקודות Owner קיימות ---
 
 @bot.tree.command(name="warn", description="מתן אזהרה")
 @is_owner()
@@ -131,7 +148,35 @@ async def recommend(interaction: discord.Interaction, text: str):
     if ch: await ch.send(embed=embed)
     await interaction.response.send_message("תודה על ההמלצה!", ephemeral=True)
 
-# --- הגנות אוטומטיות מתקדמות ---
+# --- הגנות אוטומטיות ו-Anti Nuke (שלב 4) ---
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    # מגן Anti-Nuke: מונע מחיקת ערוצים המונית
+    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
+        user = entry.user
+        
+        # אם הבעלים מוחק או שהבוט מוחק - זה בסדר
+        if user.id == channel.guild.owner_id or user.id == bot.user.id:
+            return
+
+        now = datetime.now()
+        nuke_monitoring[user.id].append(now)
+        # ניקוי פעולות ישנות מדקה
+        nuke_monitoring[user.id] = [t for t in nuke_monitoring[user.id] if (now - t).total_seconds() < 60]
+
+        if len(nuke_monitoring[user.id]) >= 2: # אם מחק 2 ערוצים בדקה
+            # ענישה: הסרת כל הרולים למשתמש
+            for role in user.roles:
+                try:
+                    if role.name != "@everyone":
+                        await user.remove_roles(role)
+                except:
+                    continue
+            
+            log_ch = bot.get_channel(LOG_CHANNEL_ID)
+            if log_ch:
+                await log_ch.send(f"🚨 **ניסיון NUKE זוהה!** המשתמש {user.mention} ניסה למחוק ערוצים והרולים שלו הוסרו מיד!")
 
 @bot.event
 async def on_message(message):
@@ -148,7 +193,7 @@ async def on_message(message):
             await message.channel.send(f"🔇 {message.author.mention} הושתק ל-10 דקות עקב ספאם.")
             return
 
-        # 2. מגן קישורים והזמנות לשרתים אחרים
+        # 2. מגן קישורים
         if re.search(r'(https?://\S+|discord\.gg/\S+)', message.content):
             await message.delete()
             log_ch = bot.get_channel(LOG_CHANNEL_ID)
@@ -170,7 +215,6 @@ async def on_member_join(member):
     ch = member.guild.system_channel
     if ch:
         embed = discord.Embed(title="ברוך הבא לשרת החזק במדינה! 🔥", description=f"{member.mention}, שמחים שבאת!", color=0x2ecc71)
-        embed.set_image(url="https://i.imgur.com/your_welcome_image.png") # תוכל להוסיף לינק לתמונה
         await ch.send(embed=embed)
 
 @bot.event
