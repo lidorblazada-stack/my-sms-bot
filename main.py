@@ -8,8 +8,8 @@ import firebase_admin
 from firebase_admin import credentials, db
 from collections import defaultdict
 
-# --- הגדרות ---
-TOKEN = os.getenv('DISCORD_TOKEN') # וודא שב-Railway זה השם
+# --- הגדרות - הותאם למשתנה שלך ב-Railway ---
+TOKEN = os.getenv('ALT_BOT_TOKEN') 
 FIREBASE_URL = os.getenv('FIREBASE_URL')
 LOG_CHANNEL_ID = 1499510962296721568 
 
@@ -21,7 +21,6 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_URL})
 
 message_counts = defaultdict(list) 
-nuke_monitoring = defaultdict(list)
 
 # --- הגנה: רק Owner ---
 def is_owner():
@@ -64,14 +63,7 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
     else:
         await interaction.response.send_message(f"⚠️ {member.mention} הוזהר ({w}/5). סיבה: {reason}")
 
-@bot.tree.command(name="clear", description="מחיקת הודעות")
-@is_owner()
-async def clear(interaction: discord.Interaction, amount: int):
-    await interaction.response.defer(ephemeral=True)
-    deleted = await interaction.channel.purge(limit=min(amount, 100))
-    await interaction.followup.send(f"🧹 נמחקו {len(deleted)} הודעות.")
-
-# --- הגנות אוטומטיות ---
+# --- הגנות אוטומטיות (כולל אנטי-ספאם) ---
 
 @bot.event
 async def on_message(message):
@@ -80,16 +72,16 @@ async def on_message(message):
     is_staff = any(role.name == "Owner" for role in message.author.roles)
     
     if not is_staff:
-        # 1. אנטי-ספאם
+        # אנטי-ספאם
         now = datetime.now()
         message_counts[message.author.id].append(now)
         message_counts[message.author.id] = [t for t in message_counts[message.author.id] if (now - t).total_seconds() < 3]
         if len(message_counts[message.author.id]) > 5:
             await message.author.timeout(timedelta(minutes=10))
-            await message.channel.send(f"🔇 {message.author.mention} הושתקת ל-10 דקות (ספאם).")
+            await message.channel.send(f"🔇 {message.author.mention} הושתקת ל-10 דקות עקב ספאם.")
             return
 
-        # 2. קללות וקישורים
+        # סינון מילים וקישורים
         if any(w in message.content for w in BAD_WORDS) or re.search(r'(https?://\S+|discord\.gg/\S+)', message.content):
             await message.delete()
             return
