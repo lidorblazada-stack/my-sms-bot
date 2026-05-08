@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import os
 
 # --- הגדרות מעודכנות ---
-TOKEN = os.getenv('ALT_BOT_TOKEN')
+TOKEN = os.getenv('TOKEN')
 LOG_CHANNEL_ID = 1502014872655888554  # ה-ID החדש שלך
 MIN_AGE_DAYS = 7 
 
