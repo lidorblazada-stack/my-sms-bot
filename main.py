@@ -3,10 +3,9 @@ from discord import ui, app_commands
 from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 import os
-import time
 from collections import defaultdict
 
-# --- הגדרות ID (תוודא שה-Token ב-Variables ב-Railway) ---
+# --- הגדרות ID ---
 TOKEN = os.getenv('DISCORD_TOKEN') 
 SECURITY_LOG_ID = 1499510962296721568 
 WELCOME_CH_ID = 1501713652217282591
@@ -15,185 +14,122 @@ SUGGESTIONS_CH_ID = 1501947249658429470
 REPORTS_CH_ID = 1501946934779449505    
 VERIFY_ROLE_ID = 1501983948111352091 
 
-BAD_WORDS = ["כוסאמק", "זונה", "מניאק", "שרמוטה", "נאצי", "בן זונה", "זין"]
 user_warnings = defaultdict(int)
 abuse_attempts = defaultdict(int)
-feedback_cooldowns = {}
 
-# --- פונקציית אבטחה לאונר בלבד ---
+class CyberShield(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=discord.Intents.all())
+    async def setup_hook(self):
+        await self.tree.sync()
+
+bot = CyberShield()
+
+# --- פונקציית אבטחה קריטית (לוגים + אזהרות) ---
 async def check_is_owner(interaction: discord.Interaction) -> bool:
     is_owner = any(role.name == "Owner" for role in interaction.user.roles) or interaction.user.id == interaction.guild.owner_id
     if is_owner: return True
     
+    # שליחת לוג מיידי לניהול
     log_ch = interaction.guild.get_channel(SECURITY_LOG_ID)
     if log_ch:
+        now = datetime.now(timezone.utc).strftime('%H:%M:%S | %d/%m/%Y')
         embed = discord.Embed(title="🚫 ניסיון גישה לא מורשה", color=0xff0000)
-        embed.add_field(name="משתמש:", value=f"{interaction.user.mention}")
-        embed.add_field(name="פקודה:", value=f"/{interaction.command.name}")
+        embed.add_field(name="המשתמש:", value=f"{interaction.user.mention} ({interaction.user.id})", inline=False)
+        embed.add_field(name="הפקודה שנוסתה:", value=f"/{interaction.command.name}", inline=False)
+        embed.add_field(name="זמן ניסיון:", value=now, inline=False)
         await log_ch.send(embed=embed)
     
+    # מערכת אזהרות פנימית למשתמש
     abuse_attempts[interaction.user.id] += 1
     if abuse_attempts[interaction.user.id] == 1:
-        await interaction.response.send_message("❌ פקודה ל-OWNER בלבד! ניסיון נוסף יגרור אזהרה.", ephemeral=True)
+        await interaction.response.send_message("❌ **פקודה ל-OWNER בלבד!** ניסיון נוסף יגרור אזהרה רשמית.", ephemeral=True)
     else:
         user_warnings[interaction.user.id] += 1
-        await interaction.response.send_message(f"⚠️ אזהרה רשמית נרשמה! ({user_warnings[interaction.user.id]}/5)", ephemeral=True)
+        await interaction.response.send_message(f"⚠️ **קיבלת אזהרה רשמית!** אל תיגע בפקודות OWNER. ({user_warnings[interaction.user.id]}/5)", ephemeral=True)
     return False
 
-# --- הגדרות הבוט ---
-class ServerGuard(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=discord.Intents.all())
-    async def setup_hook(self):
-        await self.tree.sync() # מסנכרן את כל הפקודות לדיסקורד
+# --- Views לפאנלים ---
+class VerifyView(ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @ui.button(label="אימות חשבון ✅", style=discord.ButtonStyle.green, custom_id="v_btn")
+    async def v(self, i, b):
+        role = i.guild.get_role(VERIFY_ROLE_ID)
+        await i.user.add_roles(role); await i.response.send_message("אומתת!", ephemeral=True)
 
-bot = ServerGuard()
+class FeedbackModal(ui.Modal, title="פידבק לשרת"):
+    msg = ui.TextInput(label="הודעה", style=discord.TextStyle.paragraph)
+    async def on_submit(self, i):
+        ch = i.guild.get_channel(FEEDBACK_CH_ID)
+        if ch: await ch.send(f"💎 פידבק מ-{i.user.name}: {self.msg.value}")
+        await i.response.send_message("נשלח!", ephemeral=True)
 
-# --- פקודות ניהול (OWNER בלבד) ---
+class FeedbackView(ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @ui.button(label="שלח פידבק 📝", style=discord.ButtonStyle.blurple, custom_id="f_btn")
+    async def f(self, i, b): await i.response.send_modal(FeedbackModal())
 
-@bot.tree.command(name="check_status", description="בדיקת סטטוס אבטחה וגיל חשבון (OWNER בלבד)")
-async def chk(interaction: discord.Interaction, member: discord.Member):
-    if await check_is_owner(interaction):
-        age = datetime.now(timezone.utc) - member.created_at
-        status = "⚠️ חשוד (חדש)" if age.days < 3 else "✅ תקין"
-        await interaction.response.send_message(f"👤 {member.name} | גיל: {age.days} ימים | סטטוס: {status}")
+# --- פקודות OWNER ---
 
-@bot.tree.command(name="clear", description="מחיקת הודעות (OWNER בלבד)")
-async def cl(interaction: discord.Interaction, amount: int):
-    if await check_is_owner(interaction):
-        await interaction.response.defer(ephemeral=True)
-        await interaction.channel.purge(limit=amount)
-        await interaction.followup.send(f"נמחקו {amount} הודעות.")
+@bot.tree.command(name="setup_verify", description="הקמת פאנל אימות (OWNER)")
+async def sv(i: discord.Interaction):
+    if await check_is_owner(i): await i.channel.send("🛡️ לחץ לאימות:", view=VerifyView()); await i.response.send_message("בוצע", ephemeral=True)
 
-@bot.tree.command(name="mute", description="השתקת משתמש (OWNER בלבד)")
-async def mt(interaction: discord.Interaction, member: discord.Member, minutes: int):
-    if await check_is_owner(interaction):
-        await member.timeout(timedelta(minutes=minutes))
-        await interaction.response.send_message(f"🔇 {member.mention} הושתק.")
+@bot.tree.command(name="setup_feedback", description="הקמת פאנל פידבק (OWNER)")
+async def sf(i: discord.Interaction):
+    if await check_is_owner(i): await i.channel.send("💬 פאנל פידבקים:", view=FeedbackView()); await i.response.send_message("בוצע", ephemeral=True)
 
-@bot.tree.command(name="unmute", description="ביטול השתקה (OWNER בלבד)")
-async def umt(interaction: discord.Interaction, member: discord.Member):
-    if await check_is_owner(interaction):
-        await member.timeout(None)
-        await interaction.response.send_message(f"🔊 {member.mention} חזר לדבר.")
-
-@bot.tree.command(name="kick", description="העפת משתמש (OWNER בלבד)")
-async def kk(interaction: discord.Interaction, member: discord.Member):
-    if await check_is_owner(interaction):
-        await member.kick()
-        await interaction.response.send_message(f"👢 {member.mention} הועף.")
-
-@bot.tree.command(name="ban", description="חסימת משתמש (OWNER בלבד)")
-async def bn(interaction: discord.Interaction, member: discord.Member):
-    if await check_is_owner(interaction):
-        await member.ban()
-        await interaction.response.send_message(f"🚫 {member.mention} נחסם.")
-
-@bot.tree.command(name="unban", description="ביטול חסימה לפי ID (OWNER בלבד)")
-async def ubn(interaction: discord.Interaction, user_id: str):
-    if await check_is_owner(interaction):
-        user = await bot.fetch_user(int(user_id))
-        await interaction.guild.unban(user)
-        await interaction.response.send_message(f"✅ {user.name} שוחרר.")
-
-@bot.tree.command(name="warn", description="מתן אזהרה (OWNER בלבד)")
-async def wr(interaction: discord.Interaction, member: discord.Member):
-    if await check_is_owner(interaction):
+@bot.tree.command(name="warn", description="מתן אזהרה למשתמש (OWNER)")
+async def warn(i: discord.Interaction, member: discord.Member):
+    if await check_is_owner(i):
         user_warnings[member.id] += 1
-        await interaction.response.send_message(f"⚠️ {member.mention} הוזהר.")
+        await i.response.send_message(f"⚠️ {member.mention} הוזהר! (סך הכל: {user_warnings[member.id]})")
 
-@bot.tree.command(name="clear_warns", description="איפוס אזהרות (OWNER בלבד)")
-async def cwr(interaction: discord.Interaction, member: discord.Member):
-    if await check_is_owner(interaction):
+@bot.tree.command(name="clear_warns", description="איפוס אזהרות (OWNER)")
+async def cw(i: discord.Interaction, member: discord.Member):
+    if await check_is_owner(i):
         user_warnings[member.id] = 0
-        await interaction.response.send_message(f"✅ אזהרות אופסו.")
+        await i.response.send_message(f"✅ האזהרות של {member.mention} אופסו.")
 
-@bot.tree.command(name="lock", description="נעילת ערוץ (OWNER בלבד)")
-async def lock(interaction: discord.Interaction):
-    if await check_is_owner(interaction):
-        await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
-        await interaction.response.send_message("🔒 ננעל.")
+@bot.tree.command(name="ban", description="חסימת משתמש (OWNER)")
+async def ban(i: discord.Interaction, member: discord.Member):
+    if await check_is_owner(i): await member.ban(); await i.response.send_message(f"🚫 {member.name} נחסם.")
 
-@bot.tree.command(name="unlock", description="פתיחת ערוץ (OWNER בלבד)")
-async def unlock(interaction: discord.Interaction):
-    if await check_is_owner(interaction):
-        await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
-        await interaction.response.send_message("🔓 נפתח.")
-
-@bot.tree.command(name="slowmode", description="הגדרת מצב איטי (OWNER בלבד)")
-async def slow(interaction: discord.Interaction, seconds: int):
-    if await check_is_owner(interaction):
-        await interaction.channel.edit(slowmode_delay=seconds)
-        await interaction.response.send_message(f"⏳ סלואו-מוד: {seconds} שניות.")
+@bot.tree.command(name="mute", description="השתקת משתמש (OWNER)")
+async def mute(i: discord.Interaction, member: discord.Member, minutes: int):
+    if await check_is_owner(i): await member.timeout(timedelta(minutes=minutes)); await i.response.send_message(f"🔇 {member.name} הושתק.")
 
 # --- פקודות כלליות ---
 
-@bot.tree.command(name="report", description="דיווח על משתמש לצוות")
-async def rp(interaction: discord.Interaction, member: discord.Member, reason: str):
-    ch = interaction.guild.get_channel(REPORTS_CH_ID)
-    if ch:
-        embed = discord.Embed(title="🚨 דיווח", color=0xe74c3c)
-        embed.add_field(name="על:", value=member.mention)
-        embed.add_field(name="סיבה:", value=reason)
-        await ch.send(embed=embed)
-        await interaction.response.send_message("נשלח.", ephemeral=True)
+@bot.tree.command(name="warnings", description="בדיקת אזהרות של משתמש")
+async def check_w(i: discord.Interaction, member: discord.Member = None):
+    target = member or i.user
+    await i.response.send_message(f"📋 למשתמש {target.mention} יש **{user_warnings[target.id]}** אזהרות.")
 
-@bot.tree.command(name="suggest", description="שליחת הצעה לשיפור")
-async def sg(interaction: discord.Interaction, text: str):
-    ch = interaction.guild.get_channel(SUGGESTIONS_CH_ID)
-    if ch:
-        embed = discord.Embed(title="💡 הצעה", description=text, color=0xf1c40f)
-        await ch.send(embed=embed)
-        await interaction.response.send_message("תודה!", ephemeral=True)
+@bot.tree.command(name="ping", description="בדיקת מהירות")
+async def ping(i: discord.Interaction): await i.response.send_message(f"🏓 {round(bot.latency * 1000)}ms")
 
-@bot.tree.command(name="warnings", description="בדיקת אזהרות")
-async def wrs(interaction: discord.Interaction, member: discord.Member = None):
-    m = member or interaction.user
-    await interaction.response.send_message(f"📋 {m.mention}: {user_warnings[m.id]} אזהרות.")
-
-@bot.tree.command(name="avatar", description="הצגת תמונת פרופיל")
-async def av(interaction: discord.Interaction, member: discord.Member = None):
-    m = member or interaction.user
-    await interaction.response.send_message(m.display_avatar.url)
-
-@bot.tree.command(name="user_id", description="קבלת ID של משתמש")
-async def uid(interaction: discord.Interaction, member: discord.Member):
-    await interaction.response.send_message(f"🆔 `{member.id}`")
-
-@bot.tree.command(name="server_info", description="מידע על השרת")
-async def si(interaction: discord.Interaction):
-    await interaction.response.send_message(f"🏰 {interaction.guild.name} | 👥 {interaction.guild.member_count}")
-
-@bot.tree.command(name="ping", description="בדיקת דיליי")
-async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message(f"🏓 {round(bot.latency * 1000)}ms")
-
-# --- אירועים: וולקם + Alt Detector ---
+# --- אירועים ---
 
 @bot.event
 async def on_member_join(member):
-    # 1. דיווח אבטחה ל-ID שלך (Server Guard מדווח)
+    # בדיקת חשבון חשוד
     log_ch = member.guild.get_channel(SECURITY_LOG_ID)
     if log_ch:
         age = datetime.now(timezone.utc) - member.created_at
-        status = "⚠️ חשוד (חדש)" if age.days < 3 else "✅ תקין"
-        color = 0xff0000 if age.days < 3 else 0x00ff00
-        embed = discord.Embed(title="🛡️ שומר השרת - בדיקת אבטחה", color=color)
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="משתמש:", value=member.mention)
-        embed.add_field(name="גיל חשבון:", value=f"{age.days} ימים")
-        embed.add_field(name="סטטוס:", value=status)
-        await log_ch.send(embed=embed)
-
-    # 2. הודעת וולקם עם תמונת פרופיל גדולה (מתוקן!)
+        status = "⚠️ חשבון חשוד!" if age.days < 3 else "✅ תקין"
+        await log_ch.send(f"👤 **כניסה:** {member.mention} | **גיל חשבון:** {age.days} ימים | **סטטוס:** {status}")
+    
+    # וולקם
     welcome_ch = member.guild.get_channel(WELCOME_CH_ID)
     if welcome_ch:
-        w_embed = discord.Embed(description="**ברוך הבא לשרת! 🔥**", color=0x00ffff)
-        w_embed.set_image(url=member.display_avatar.url)
-        await welcome_ch.send(content=f"אהלן {member.mention} !", embed=w_embed)
+        emb = discord.Embed(description=f"ברוך הבא {member.mention}! 🔥", color=0x00ffff)
+        emb.set_image(url=member.display_avatar.url)
+        await welcome_ch.send(embed=emb)
 
 @bot.event
 async def on_ready():
-    print(f'🛡️ Unified Server Guard is ONLINE!')
+    bot.add_view(VerifyView()); bot.add_view(FeedbackView())
+    print(f"🛡️ {bot.user.name} Is Fully Ready!")
 
 if TOKEN: bot.run(TOKEN)
