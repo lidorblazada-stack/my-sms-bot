@@ -1,69 +1,80 @@
 import discord
-from discord import ui, app_commands
+from discord import app_commands
 from discord.ext import commands
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 import os
 import re
-import firebase_admin
-from firebase_admin import credentials, db
 from collections import defaultdict
 
-# --- הגדרות - הותאם למשתנה שלך ב-Railway ---
-TOKEN = os.getenv('DISCORD_TOKEN') 
-FIREBASE_URL = os.getenv('FIREBASE_URL')
+# --- הגדרות (וודא שהן תואמות ל-Railway) ---
+TOKEN = os.getenv('DISCORD_TOKEN')
 LOG_CHANNEL_ID = 1499510962296721568 
 
 BAD_WORDS = ["כוסאמק", "זונה", "מניאק", "שרמוטה", "נאצי", "בן זונה", "זין"] 
 
-# --- חיבור לפיירבייס ---
-if not firebase_admin._apps:
-    cred = credentials.Certificate("serviceAccountKey.json")
-    firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_URL})
+# --- משתני מערכת בזיכרון (יציב ללא פיירבייס) ---
+user_warnings = defaultdict(int)
+message_counts = defaultdict(list)
+nuke_monitoring = defaultdict(list)
+join_monitoring = []
 
-message_counts = defaultdict(list) 
-
-# --- הגנה: רק Owner ---
-def is_owner():
-    async def predicate(interaction: discord.Interaction):
-        is_owner_role = any(role.name == "Owner" for role in interaction.user.roles)
-        if is_owner_role or interaction.user.id == interaction.guild.owner_id: return True
-        await interaction.response.send_message("❌ פקודה זו למנהלי העל בלבד!", ephemeral=True)
-        return False
-    return app_commands.check(predicate)
-
-# --- הבוט ---
 class CyberShield(commands.Bot):
     def __init__(self):
         intents = discord.Intents.all()
         super().__init__(command_prefix="!", intents=intents)
+    
     async def setup_hook(self):
+        # סנכרון פקודות הסלאש (/)
         await self.tree.sync()
 
 bot = CyberShield()
 
+# --- בדיקת הרשאות Owner ---
+def is_owner():
+    async def predicate(interaction: discord.Interaction):
+        is_owner_role = any(role.name == "Owner" for role in interaction.user.roles)
+        if is_owner_role or interaction.user.id == interaction.guild.owner_id:
+            return True
+        await interaction.response.send_message("❌ פקודה זו מיועדת לצוות הניהול הגבוה בלבד!", ephemeral=True)
+        return False
+    return app_commands.check(predicate)
+
 # --- פקודות ניהול ---
 
-@bot.tree.command(name="warnings", description="בדיקת אזהרות של משתמש")
-async def warnings(interaction: discord.Interaction, member: discord.Member = None):
-    m = member or interaction.user
-    w = db.reference(f'users/{m.id}/warnings').get() or 0
-    embed = discord.Embed(title=f"📋 מצב אזהרות: {m.display_name}", description=f"למשתמש יש **{w}/5** אזהרות.", color=0xe74c3c)
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="warn", description="מתן אזהרה")
+@bot.tree.command(name="warn", description="מתן אזהרה למשתמש")
 @is_owner()
 async def warn(interaction: discord.Interaction, member: discord.Member, reason: str = "לא צוין"):
-    ref = db.reference(f'users/{member.id}/warnings')
-    w = (ref.get() or 0) + 1
-    ref.set(w)
-    if w >= 5:
-        await member.kick(reason="5 אזהרות")
-        ref.set(0)
-        await interaction.response.send_message(f"👢 {member.mention} הועף מהשרת עקב 5 אזהרות.")
+    user_warnings[member.id] += 1
+    count = user_warnings[member.id]
+    
+    if count >= 5:
+        await member.kick(reason="צבר 5 אזהרות")
+        user_warnings[member.id] = 0
+        await interaction.response.send_message(f"👢 {member.mention} הועף מהשרת לאחר שצבר 5 אזהרות.")
     else:
-        await interaction.response.send_message(f"⚠️ {member.mention} הוזהר ({w}/5). סיבה: {reason}")
+        await interaction.response.send_message(f"⚠️ {member.mention} הוזהר! ({count}/5). סיבה: {reason}")
 
-# --- הגנות אוטומטיות (כולל אנטי-ספאם) ---
+@bot.tree.command(name="warnings", description="בדיקת כמות אזהרות")
+async def warnings(interaction: discord.Interaction, member: discord.Member = None):
+    target = member or interaction.user
+    count = user_warnings[target.id]
+    await interaction.response.send_message(f"📋 למשתמש {target.mention} יש **{count}/5** אזהרות.")
+
+@bot.tree.command(name="clear", description="מחיקת הודעות מהצ'אט")
+@is_owner()
+async def clear(interaction: discord.Interaction, amount: int):
+    await interaction.response.defer(ephemeral=True)
+    deleted = await interaction.channel.purge(limit=min(amount, 100))
+    await interaction.followup.send(f"🧹 ניקיתי {len(deleted)} הודעות בהצלחה.")
+
+@bot.tree.command(name="mute", description="השתקת משתמש לזמן מוגבל")
+@is_owner()
+async def mute(interaction: discord.Interaction, member: discord.Member, minutes: int):
+    until = timedelta(minutes=minutes)
+    await member.timeout(until)
+    await interaction.response.send_message(f"🔇 {member.mention} הושתק ל-{minutes} דקות.")
+
+# --- אירועים והגנות אוטומטיות ---
 
 @bot.event
 async def on_message(message):
@@ -72,24 +83,55 @@ async def on_message(message):
     is_staff = any(role.name == "Owner" for role in message.author.roles)
     
     if not is_staff:
-        # אנטי-ספאם
+        # 1. אנטי-ספאם
         now = datetime.now()
         message_counts[message.author.id].append(now)
         message_counts[message.author.id] = [t for t in message_counts[message.author.id] if (now - t).total_seconds() < 3]
+        
         if len(message_counts[message.author.id]) > 5:
             await message.author.timeout(timedelta(minutes=10))
-            await message.channel.send(f"🔇 {message.author.mention} הושתקת ל-10 דקות עקב ספאם.")
+            await message.channel.send(f"🔇 {message.author.mention}, הפסק להספים! הושתקת ל-10 דקות.")
             return
 
-        # סינון מילים וקישורים
-        if any(w in message.content for w in BAD_WORDS) or re.search(r'(https?://\S+|discord\.gg/\S+)', message.content):
+        # 2. סינון קללות וקישורים
+        if any(word in message.content for word in BAD_WORDS) or re.search(r'(https?://\S+|discord\.gg/\S+)', message.content):
             await message.delete()
             return
 
     await bot.process_commands(message)
 
 @bot.event
+async def on_message_delete(message):
+    if message.author.bot: return
+    log_ch = bot.get_channel(LOG_CHANNEL_ID)
+    if log_ch:
+        embed = discord.Embed(title="🗑️ הודעה נמחקה", color=0xe74c3c, timestamp=datetime.now())
+        embed.add_field(name="כותב:", value=message.author.mention)
+        embed.add_field(name="תוכן:", value=message.content or "קובץ/תמונה")
+        embed.set_footer(text=f"ערוץ: {message.channel.name}")
+        await log_ch.send(embed=embed)
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    # הגנת Anti-Nuke: מזהה מחיקת ערוצים מהירה
+    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
+        if entry.user.id == channel.guild.owner_id: return
+        
+        user_id = entry.user.id
+        now = datetime.now()
+        nuke_monitoring[user_id].append(now)
+        nuke_monitoring[user_id] = [t for t in nuke_monitoring[user_id] if (now-t).total_seconds() < 60]
+        
+        if len(nuke_monitoring[user_id]) >= 2:
+            member = await channel.guild.fetch_member(user_id)
+            for role in member.roles:
+                try: await member.remove_roles(role)
+                except: continue
+            log = bot.get_channel(LOG_CHANNEL_ID)
+            if log: await log.send(f"🚨 **מצב חירום:** הוסרו הרולים ל-{member.mention} כי הוא ניסה למחוק ערוצים!")
+
+@bot.event
 async def on_ready():
-    print(f'🛡️ Cyber-Shield is Online and Protecting!')
+    print(f'🛡️ Cyber-Shield הופעל בהצלחה: {bot.user}')
 
 if TOKEN: bot.run(TOKEN)
