@@ -1,0 +1,57 @@
+import discord
+from discord import app_commands, ui
+import json
+import asyncio
+import random
+
+# פונקציות לניהול הכסף - מוודא שזה מתחבר לספאמר שלך
+def load_data():
+    try:
+        with open('users.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_data(data):
+    with open('users.json', 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+# חלון ההשקעה שקופץ למשתמש
+class InvestModal(ui.Modal, title='💰 השקעה בבורסה'):
+    amount = ui.TextInput(label='כמה קרדיטים להשקיע?', placeholder='הכנס מספר...')
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        try:
+            invest_amount = int(self.amount.value)
+        except ValueError:
+            return await interaction.response.send_message("❌ אחי, תכתוב מספרים בלבד!", ephemeral=True)
+
+        data = load_data()
+        
+        # מוודא שהמשתמש קיים ב-JSON
+        if user_id not in data:
+            data[user_id] = {"credits": 0}
+        
+        user_credits = data[user_id].get('credits', 0)
+
+        if invest_amount <= 0:
+            return await interaction.response.send_message("❌ מינימום השקעה זה 1 קרדיט.", ephemeral=True)
+        if user_credits < invest_amount:
+            return await interaction.response.send_message(f"❌ חסר לך כסף! יש לך רק `{user_credits}`.", ephemeral=True)
+
+        # לוקחים את הכסף מיד
+        data[user_id]['credits'] -= invest_amount
+        save_data(data)
+
+        await interaction.response.send_message(f"⏳ מעבד השקעה של `{invest_amount}` קרדיטים...", ephemeral=True)
+        await asyncio.sleep(3) # הדיליי לטעינה
+
+        # הגרלה: 30% סיכוי
+        if random.randint(1, 100) <= 30:
+            winnings = invest_amount * 2
+            data[user_id]['credits'] += winnings
+            save_data(data)
+            await interaction.edit_original_response(content=f"🚀 **זכייה מטורפת!** השוק זינק וקיבלת `{winnings}` קרדיטים!")
+        else:
+            await interaction.edit_original_response(content=f"📉 **נפילה!** השוק קרס והפסדת את ההשקעה.")
