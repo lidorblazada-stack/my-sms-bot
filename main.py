@@ -6,7 +6,7 @@ import os
 import asyncio
 from collections import defaultdict
 
-# --- IDs והגדרות (בול לפי התמונה שלך לידור) ---
+# --- IDs והגדרות סופיות (בול לפי התמונה שלך) ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 MY_USER_ID = 1130542850883469443
 SECOND_ID = 1493293951959044147
@@ -14,16 +14,16 @@ SECOND_ID = 1493293951959044147
 # ערוצים ולוגים
 WELCOME_CH_ID = 1501713652217282591
 FEEDBACK_CH_ID = 1503475379942461522
-RECOMMEND_CH_ID = 1501947249658429470
-REPORT_LOG_CH_ID = 1501946934779449505
-OWNER_LOG_CH_ID = 1503496964732354620
-ALTS_LOG_CH_ID = 1502014872655888554
-ALT_DETECTION_LOG = 1503464176599695380
+RECOMMEND_CH_ID = 1501947249658429470     # ערוץ המלצות
+REPORT_LOG_CH_ID = 1501946934779449505    # לוג דיווחים
+OWNER_LOG_CH_ID = 1503496964732354620     # לוג שימוש בפקודות אונר
+ALTS_LOG_CH_ID = 1502014872655888554      # לוג הלטים (Anti-Ban)
+ALT_DETECTION_LOG = 1503464176599695380   # לוג זיהוי אלטים עם כפתורים
 
 # רולים
 MEMBER_ROLE_ID = 1501983948111352091
-SUSPICIOUS_ROLE_ID = 1503464176599695380
-MUTE_2DAYS_ROLE_ID = 1501953906736103535
+SUSPICIOUS_ROLE_ID = 1503464176599695380  # רול חשוד (אלט)
+MUTE_2DAYS_ROLE_ID = 1501953906736103535  # רול מיוט יומיים
 OWNER_CMD_ROLE_ID = 1502014872655888554
 
 # רולים לחנות
@@ -56,14 +56,14 @@ async def send_owner_log(guild, user, command_name, details=""):
 
 class VerifyView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="התחל אימות ✅", style=discord.ButtonStyle.green, custom_id="verify_permanent")
+    @ui.button(label="התחל אימות ✅", style=discord.ButtonStyle.green, custom_id="v_main_1")
     async def v(self, i, b):
         role = i.guild.get_role(MEMBER_ROLE_ID)
         if role: await i.user.add_roles(role); await i.response.send_message("אומתת!", ephemeral=True)
 
 class FeedbackReplyView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="שלח פידבק 💬", style=discord.ButtonStyle.green, custom_id="feedback_reply_btn")
+    @ui.button(label="שלח פידבק 💬", style=discord.ButtonStyle.green, custom_id="fb_reply_fixed")
     async def fast_fb(self, i, b): await i.response.send_modal(FeedbackModal())
 
 class FeedbackModal(ui.Modal, title="📤 שלח פידבק"):
@@ -72,30 +72,30 @@ class FeedbackModal(ui.Modal, title="📤 שלח פידבק"):
         ch = i.guild.get_channel(FEEDBACK_CH_ID)
         emb = discord.Embed(title="💬 פידבק חדש", description=self.inp.value, color=0x00ffff)
         emb.set_author(name=i.user.name, icon_url=i.user.display_avatar.url)
-        await ch.send(embed=emb, view=FeedbackReplyView())
+        await ch.send(embed=emb, view=FeedbackReplyView()) # כפתור מתחת לכל פידבק
         await i.response.send_message("נשלח!", ephemeral=True)
 
 class ShopView(ui.View):
     def __init__(self): super().__init__(timeout=None)
     
-    @ui.button(label="קנה Supporter 🎗️ (2000)", style=discord.ButtonStyle.secondary, custom_id="buy_supporter")
+    @ui.button(label="קנה Supporter 🎗️", style=discord.ButtonStyle.secondary, custom_id="s_b1")
     async def b1(self, i, b): await self.buy(i, 2000, ROLE_SUPPORTER)
     
-    @ui.button(label="קנה VIP 💎 (5000)", style=discord.ButtonStyle.primary, custom_id="buy_vip")
+    @ui.button(label="קנה VIP 💎", style=discord.ButtonStyle.primary, custom_id="s_b2")
     async def b2(self, i, b): await self.buy(i, 5000, ROLE_VIP)
     
-    @ui.button(label="קנה Staff 🛠️ (15000)", style=discord.ButtonStyle.danger, custom_id="buy_staff")
+    @ui.button(label="קנה Staff 🛠️", style=discord.ButtonStyle.danger, custom_id="s_b3")
     async def b3(self, i, b): await self.buy(i, 15000, ROLE_TICKET_STAFF)
     
-    @ui.button(label="יתרה 💳", style=discord.ButtonStyle.success, custom_id="check_balance")
+    @ui.button(label="יתרה 💳", style=discord.ButtonStyle.success, custom_id="s_b4")
     async def b4(self, i, b): await i.response.send_message(f"💰 יתרה: `{user_balances[i.user.id]}`", ephemeral=True)
 
     async def buy(self, i, p, r_id):
-        if user_balances[i.user.id] < p: return await i.response.send_message("❌ חסר לך כסף!", ephemeral=True)
+        if user_balances[i.user.id] < p: return await i.response.send_message("❌ אין לך מספיק כסף!", ephemeral=True)
         user_balances[i.user.id] -= p
         role = i.guild.get_role(r_id)
         if role: await i.user.add_roles(role)
-        await i.response.send_message("✅ הרכישה בוצעה בהצלחה!", ephemeral=True)
+        await i.response.send_message("✅ תתחדש על הרול!", ephemeral=True)
 
 # --- Bot Core ---
 class CyberShield(commands.Bot):
@@ -120,20 +120,26 @@ async def on_message(msg):
     if len(spam_tracker[u_id]) > 5:
         user_warnings[u_id] += 1
         if user_warnings[u_id] == 1:
-            try: await msg.author.timeout(timedelta(minutes=1), reason="ספאם אזהרה 1"); await msg.channel.send(f"⚠️ {msg.author.mention}, אזהרה מילולית! קיבלת דקה טיימאוט.")
+            try: 
+                await msg.author.timeout(timedelta(minutes=1), reason="ספאם - אזהרה מילולית")
+                await msg.channel.send(f"⚠️ {msg.author.mention}, אזהרה מילולית! קיבלת דקה טיימאוט על ספאם.")
             except: pass
         return
 
     # כסף ו-XP
     user_balances[u_id] += 10
-    user_xp[u_id] += 15
-    if user_xp[u_id] >= xp_for_level(user_levels[u_id] + 1):
-        user_levels[u_id] += 1
-        await msg.channel.send(f"🎊 {msg.author.mention} עלית לרמה {user_levels[u_id]}!")
+    now_dt = datetime.utcnow()
+    if u_id not in last_xp_time or now_dt > last_xp_time[u_id] + timedelta(seconds=30):
+        last_xp_time[u_id] = now_dt
+        user_xp[u_id] += 20
+        lvl = user_levels[u_id]
+        if user_xp[u_id] >= xp_for_level(lvl + 1):
+            user_levels[u_id] += 1
+            await msg.channel.send(f"🎊 {msg.author.mention} עלית לרמה **{lvl + 1}**! 🔥")
 
     await bot.process_commands(msg)
 
-# --- פקודות ---
+# --- פקודות אונר ---
 @bot.tree.command(name="setup_shop")
 async def ss(i):
     if i.user.id != MY_USER_ID: return
@@ -144,12 +150,21 @@ async def ss(i):
 @bot.tree.command(name="setup_verify")
 async def sv(i):
     if i.user.id != MY_USER_ID: return
-    await i.channel.send(embed=discord.Embed(title="🛡️ אימות", color=0x2ecc71), view=VerifyView())
+    await i.channel.send(embed=discord.Embed(title="🛡️ אימות", description="לחץ על הכפתור כדי להיכנס לשרת", color=0x2ecc71), view=VerifyView())
     await i.response.send_message("אימות הוקם!", ephemeral=True)
     await send_owner_log(i.guild, i.user, "setup_verify")
 
+@bot.tree.command(name="setup_feedback")
+async def s_fb(i):
+    if i.user.id != MY_USER_ID: return
+    await i.channel.send(embed=discord.Embed(title="💬 פידבק", description="לחץ למטה כדי לשלוח פידבק"), view=FeedbackReplyView())
+    await i.response.send_message("מערכת פידבק הוקמה!", ephemeral=True)
+    await send_owner_log(i.guild, i.user, "setup_feedback")
+
 @bot.tree.command(name="rank")
 async def rank(i):
-    await i.response.send_message(f"📊 רמה: {user_levels[i.user.id]} | XP: {user_xp[i.user.id]}", ephemeral=True)
+    lvl = user_levels[i.user.id]
+    xp = user_xp[i.user.id]
+    await i.response.send_message(f"📊 {i.user.mention}, אתה ברמה **{lvl}** ({xp} XP).", ephemeral=True)
 
 bot.run(TOKEN)
