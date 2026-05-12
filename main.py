@@ -6,12 +6,12 @@ import os
 import asyncio
 from collections import defaultdict
 
-# --- IDs והגדרות סופיות ---
+# --- הגדרות ו-IDs (לפי הצילומים) ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 MY_USER_ID = 1130542850883469443 # ה-ID של לידור
-SECOND_ID = 1493293951959044147
+SECOND_ID = 1493293951959044147 #
 
-# ערוצים
+# ערוצים ולוגים
 WELCOME_CH_ID = 1501713652217282591
 FEEDBACK_CH_ID = 1503475379942461522
 RECOMMEND_CH_ID = 1501947249658429470     
@@ -27,7 +27,7 @@ MUTE_2DAYS_ROLE_ID = 1501953906736103535
 # רולים לחנות
 ROLE_SUPPORTER = 1503819239310627068
 ROLE_VIP = 1503817695466881255
-ROLE_TICKET_STAFF = 150131611041 # לפי ה-ID בתמונה
+ROLE_TICKET_STAFF = 1501316672345211041
 
 # דאטה-בייס בזיכרון
 user_warnings = defaultdict(int)
@@ -50,7 +50,7 @@ async def send_owner_log(guild, user, command_name, details=""):
         if details: emb.add_field(name="פרטים", value=details)
         await ch.send(embed=emb)
 
-# --- Views ---
+# --- Views (ממשקים) ---
 
 class VerifyView(ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -70,8 +70,9 @@ class FeedbackModal(ui.Modal, title="📤 שלח פידבק"):
         ch = i.guild.get_channel(FEEDBACK_CH_ID)
         emb = discord.Embed(title="💬 פידבק חדש", description=self.inp.value, color=0x00ffff)
         emb.set_author(name=i.user.name, icon_url=i.user.display_avatar.url)
+        # הוספת הכפתור מתחת לכל הודעת פידבק שנשלחת
         await ch.send(embed=emb, view=FeedbackReplyView())
-        await i.response.send_message("נשלח!", ephemeral=True)
+        await i.response.send_message("הפידבק נשלח בהצלחה!", ephemeral=True)
 
 class ShopView(ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -83,6 +84,7 @@ class ShopView(ui.View):
     async def b3(self, i, b): await self.buy(i, 15000, ROLE_TICKET_STAFF)
     @ui.button(label="יתרה 💳", style=discord.ButtonStyle.success, custom_id="s_4")
     async def b4(self, i, b): await i.response.send_message(f"💰 יתרה נוכחית: `{user_balances[i.user.id]}`", ephemeral=True)
+    
     async def buy(self, i, p, r_id):
         if user_balances[i.user.id] < p: return await i.response.send_message("❌ אין לך מספיק כסף!", ephemeral=True)
         user_balances[i.user.id] -= p
@@ -107,7 +109,7 @@ async def on_message(msg):
     u_id = msg.author.id
     now = asyncio.get_event_loop().time()
     
-    # אנטי-ספאם עם טיימאוט דקה (לידור, זה בול מה שביקשת)
+    # אנטי-ספאם עם טיימאוט של דקה
     spam_tracker[u_id].append(now)
     spam_tracker[u_id] = [t for t in spam_tracker[u_id] if now - t < 5]
     if len(spam_tracker[u_id]) > 5:
@@ -117,16 +119,35 @@ async def on_message(msg):
         except: pass
         return
 
-    # כסף ו-XP
+    # מערכת כסף ו-XP
     user_balances[u_id] += 10
     user_xp[u_id] += 15
     if user_xp[u_id] >= xp_for_level(user_levels[u_id] + 1):
         user_levels[u_id] += 1
-        await msg.channel.send(f"🎊 {msg.author.mention} עלית לרמה {user_levels[u_id]}! 🔥")
+        await msg.channel.send(f"🎊 {msg.author.mention} עלית לרמה {user_levels[u_id]}!")
 
     await bot.process_commands(msg)
 
-# --- פקודות (עברית עם OWNER באנגלית) ---
+# --- פקודות (עברית עם OWNER/USER באנגלית) ---
+
+@bot.tree.command(name="add_warn", description="[OWNER] מתן אזהרה למשתמש וענישה אוטומטית")
+async def aw(i, member: discord.Member, reason: str):
+    if i.user.id != MY_USER_ID: return
+    user_warnings[member.id] += 1
+    count = user_warnings[member.id]
+    await i.response.send_message(f"המשתמש {member.mention} קיבל אזהרה ({count}/5). סיבה: {reason}")
+    await send_owner_log(i.guild, i.user, "add_warn", f"אל: {member.name} | כמות: {count}")
+
+@bot.tree.command(name="rank", description="[USER] שלך XP-בדיקת הרמה וה")
+async def r(i):
+    await i.response.send_message(f"📊 {i.user.mention}, אתה ברמה **{user_levels[i.user.id]}** עם `{user_xp[i.user.id]}` XP.", ephemeral=True)
+
+@bot.tree.command(name="setup_feedback", description="[OWNER] הקמת מערכת הפידבקים")
+async def sf(i):
+    if i.user.id != MY_USER_ID: return
+    await i.channel.send(embed=discord.Embed(title="💬 פידבק", description="שלח לנו פידבק על השרת בלחיצה על הכפתור", color=0x00ffff), view=FeedbackReplyView())
+    await i.response.send_message("מערכת פידבק הוקמה!", ephemeral=True)
+    await send_owner_log(i.guild, i.user, "setup_feedback")
 
 @bot.tree.command(name="setup_shop", description="[OWNER] הקמת חנות הרולים של השרת")
 async def ss(i):
@@ -139,26 +160,7 @@ async def ss(i):
 async def sv(i):
     if i.user.id != MY_USER_ID: return
     await i.channel.send(embed=discord.Embed(title="🛡️ אימות", description="לחץ על הכפתור למטה כדי לקבל גישה", color=0x2ecc71), view=VerifyView())
-    await i.response.send_message("אימות הוקם!", ephemeral=True)
+    await i.response.send_message("מערכת אימות הוקמה!", ephemeral=True)
     await send_owner_log(i.guild, i.user, "setup_verify")
-
-@bot.tree.command(name="setup_feedback", description="[OWNER] הקמת מערכת הפידבקים")
-async def sf(i):
-    if i.user.id != MY_USER_ID: return
-    await i.channel.send(embed=discord.Embed(title="💬 פידבק", description="שלח לנו פידבק על השרת בלחיצה על הכפתור"), view=FeedbackReplyView())
-    await i.response.send_message("פידבק הוקם!", ephemeral=True)
-    await send_owner_log(i.guild, i.user, "setup_feedback")
-
-@bot.tree.command(name="rank", description="[USER] בדיקת הרמה וה-XP שלך")
-async def r(i):
-    await i.response.send_message(f"📊 {i.user.mention}, אתה ברמה **{user_levels[i.user.id]}** עם `{user_xp[i.user.id]}` XP.", ephemeral=True)
-
-@bot.tree.command(name="add_warn", description="[OWNER] מתן אזהרה למשתמש וענישה אוטומטית")
-async def aw(i, member: discord.Member, reason: str):
-    if i.user.id != MY_USER_ID: return
-    user_warnings[member.id] += 1
-    count = user_warnings[member.id]
-    await i.response.send_message(f"המשתמש {member.mention} קיבל אזהרה ({count}/5). סיבה: {reason}")
-    await send_owner_log(i.guild, i.user, "add_warn", f"אל: {member.name} | כמות: {count}")
 
 bot.run(TOKEN)
