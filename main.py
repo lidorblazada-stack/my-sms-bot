@@ -101,7 +101,7 @@ async def on_member_remove(m):
 async def on_member_join(m):
     ch = m.guild.get_channel(WELCOME_CH_ID)
     if ch:
-        emb = discord.Embed(description=f"Welcome {m.mention}, מס' {m.guild.member_count}.\nDeveloped by Nehoray 👑", color=0xff4500)
+        emb = discord.Embed(description=f"Welcome {m.mention}, מס' {m.guild.member_count}.\nDeveloped by NL 👑", color=0xff4500)
         await ch.send(content=m.mention, embed=emb)
 
 # --- פקודות ניהול אזהרות ---
