@@ -4,9 +4,9 @@ from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 import os
 import asyncio
-from collections import defaultdict
+import json
 
-# --- הגדרות IDs ---
+# --- הגדרות IDs (תעדכן לפי השרת שלך) ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 OWNER_ROLE_ID = 1501983948111352091 
 MUTE_ROLE_ID = 1501953906736103535  
@@ -17,34 +17,30 @@ WELCOME_CH_ID = 1501713652217282591
 VERIFY_ROLE_ID = 1501983948111352091 
 ALT_MIN_DAYS = 7 
 
-# משתני מערכת
-suspected_list = {} 
-user_warnings = defaultdict(int)
+# משתני מערכת (טעינה מקבצים כדי שלא ימחק בריסטרט)
+suspected_list = {} # {id: timestamp}
+user_warnings = {} # {id: count}
 
-# --- View עם 3 כפתורים (להעיף/להשאיר/לשים עין) ---
+# --- לוגיקה של כפתורי אלט/חשוד ---
 class AltActionView(ui.View):
     def __init__(self, member: discord.Member):
         super().__init__(timeout=None)
         self.member = member
 
-    async def check_nl_owner(self, i: discord.Interaction):
+    async def check_owner(self, i: discord.Interaction):
         if any(role.id == OWNER_ROLE_ID for role in i.user.roles): return True
-        await i.response.send_message("❌ אין לך הרשאת אונר!", ephemeral=True)
+        await i.response.send_message("❌ אין לך גישת אונר!", ephemeral=True)
         return False
 
     @ui.button(label="להעיף ❌", style=discord.ButtonStyle.danger)
     async def kick_alt(self, i, b):
-        if await self.check_nl_owner(i):
-            try:
-                await self.member.kick(reason="החלטת אונר")
-                await i.message.delete()
-                await i.response.send_message(f"✅ {self.member.name} הועף.", ephemeral=True)
-            except:
-                await i.response.send_message("❌ תקלה בהעפת המשתמש.", ephemeral=True)
+        if await self.check_owner(i):
+            await self.member.kick(reason="החלטת אונר"); await i.message.delete()
+            await i.response.send_message(f"✅ {self.member.name} הועף.", ephemeral=True)
 
     @ui.button(label="להשאיר ✅", style=discord.ButtonStyle.success)
     async def keep_alt(self, i, b):
-        if await self.check_nl_owner(i):
+        if await self.check_owner(i):
             role = i.guild.get_role(SUSPECT_ROLE_ID)
             if role and role in self.member.roles: await self.member.remove_roles(role)
             if self.member.id in suspected_list: del suspected_list[self.member.id]
@@ -53,22 +49,20 @@ class AltActionView(ui.View):
 
     @ui.button(label="להמשיך לשים עין 🕵️", style=discord.ButtonStyle.secondary)
     async def suspect_alt(self, i, b):
-        if await self.check_nl_owner(i):
+        if await self.check_owner(i):
             role = i.guild.get_role(SUSPECT_ROLE_ID)
             if role: await self.member.add_roles(role)
             suspected_list[self.member.id] = datetime.now(timezone.utc)
             await i.message.delete()
-            await i.response.send_message(f"🕵️ המעקב חודש ל-24 שעות נוספות.", ephemeral=True)
+            await i.response.send_message(f"🕵️ מעקב חודש ל-24 שעות נוספות.", ephemeral=True)
 
-# --- פאנל אימות ---
 class VerifyView(ui.View):
     def __init__(self): super().__init__(timeout=None)
     @ui.button(label="התחל אימות ✅", style=discord.ButtonStyle.green, custom_id="v_btn")
     async def v(self, i, b):
         role = i.guild.get_role(VERIFY_ROLE_ID)
-        if role: 
-            await i.user.add_roles(role)
-            await i.response.send_message("אומתת בהצלחה!", ephemeral=True)
+        if role: await i.user.add_roles(role)
+        await i.response.send_message("אומתת!", ephemeral=True)
 
 # --- Bot Core ---
 class NLShield(commands.Bot):
@@ -84,71 +78,121 @@ class NLShield(commands.Bot):
         now = datetime.now(timezone.utc)
         ch = self.get_channel(ATTEMPT_LOG_CH_ID)
         if not ch: return
-        to_report = [uid for uid, last_msg in suspected_list.items() if now - last_msg > timedelta(hours=24)]
-        for uid in to_report:
-            member = ch.guild.get_member(uid)
-            if member:
-                emb = discord.Embed(title="⚠️ התראת חוסר פעילות", description=f"החשוד {member.mention} לא שלח הודעה ב-24 שעות האחרונות.", color=0xff0000)
-                await ch.send(embed=emb, view=AltActionView(member))
-                suspected_list[uid] = now 
+        for uid, last_msg in list(suspected_list.items()):
+            if now - last_msg > timedelta(hours=24):
+                member = ch.guild.get_member(uid)
+                if member:
+                    emb = discord.Embed(title="⚠️ חשוד לא פעיל", description=f"{member.mention} לא שלח הודעה 24 שעות.", color=0xff0000)
+                    await ch.send(embed=emb, view=AltActionView(member))
+                    suspected_list[uid] = now 
 
 bot = NLShield()
 
-# --- לוגים ואבטחה ---
-async def log_it(i, status):
-    ch = i.guild.get_channel(SECURITY_LOG_ID)
-    if ch:
-        color = 0x3498db if status == "בוצע" else 0xff0000
-        emb = discord.Embed(title=f"🛡️ פקודה: {i.command.name}", description=f"סטטוס: {status}\nמבצע: {i.user.mention}", color=color)
-        await ch.send(embed=emb)
-
-async def validate_owner(i: discord.Interaction):
+# --- אבטחה ולוגים ---
+async def validate(i: discord.Interaction):
     if any(role.id == OWNER_ROLE_ID for role in i.user.roles):
-        await log_it(i, "בוצע"); return True
-    await log_it(i, "🚨 ניסיון פריצה!"); await i.response.send_message("🚫 פקודה לאונר בלבד!", ephemeral=True)
+        log_ch = i.guild.get_channel(SECURITY_LOG_ID)
+        if log_ch:
+            emb = discord.Embed(title=f"🛡️ פקודה: {i.command.name}", description=f"בוצעה על ידי: {i.user.mention}", color=0x3498db)
+            await log_ch.send(embed=emb)
+        return True
+    await i.response.send_message("🚫 ל-Owner בלבד!", ephemeral=True)
     return False
 
-# --- פקודות ---
+# --- 15 הפקודות הכי חזקות ---
 
-@bot.tree.command(name="nuke", description="ניקוי ושחזור הערוץ")
+@bot.tree.command(name="nuke", description="1. ניקוי ושחזור הערוץ")
 async def nuke(i):
-    if await validate_owner(i):
+    if await validate(i):
         new = await i.channel.clone(); await i.channel.delete()
         await new.send("🚀 הערוץ נוקה ושוחזר.")
 
-@bot.tree.command(name="warn", description="מתן אזהרה")
-async def warn(i, member: discord.Member, reason: str):
-    if await validate_owner(i):
-        user_warnings[member.id] += 1
-        await i.response.send_message(f"⚠️ {member.mention} הוזהר! ({user_warnings[member.id]})\nסיבה: {reason}")
-
-@bot.tree.command(name="clear", description="מחיקת הודעות")
+@bot.tree.command(name="clear", description="2. מחיקת כמות הודעות")
 async def clear(i, amount: int):
-    if await validate_owner(i):
-        await i.channel.purge(limit=amount); await i.response.send_message("🧹", ephemeral=True)
+    if await validate(i):
+        await i.channel.purge(limit=amount); await i.response.send_message(f"🧹 נמחקו {amount}", ephemeral=True)
 
-@bot.tree.command(name="setup_verify", description="פאנל אימות")
+@bot.tree.command(name="lock", description="3. נעילת ערוץ")
+async def lock(i):
+    if await validate(i):
+        await i.channel.set_permissions(i.guild.default_role, send_messages=False); await i.response.send_message("🔒")
+
+@bot.tree.command(name="unlock", description="4. פתיחת ערוץ")
+async def unlock(i):
+    if await validate(i):
+        await i.channel.set_permissions(i.guild.default_role, send_messages=True); await i.response.send_message("🔓")
+
+@bot.tree.command(name="mute", description="5. השתקת משתמש")
+async def mute(i, member: discord.Member):
+    if await validate(i):
+        await member.add_roles(i.guild.get_role(MUTE_ROLE_ID)); await i.response.send_message(f"🔇 {member.name} הושתק.")
+
+@bot.tree.command(name="ban", description="6. חסימת משתמש")
+async def ban(i, member: discord.Member):
+    if await validate(i):
+        await member.ban(); await i.response.send_message(f"🚫 {member.name} נחסם.")
+
+@bot.tree.command(name="kick", description="7. העפת משתמש")
+async def kick(i, member: discord.Member):
+    if await validate(i):
+        await member.kick(); await i.response.send_message(f"👢 {member.name} הועף.")
+
+@bot.tree.command(name="warn", description="8. מתן אזהרה")
+async def warn(i, member: discord.Member, reason: str):
+    if await validate(i):
+        user_warnings[member.id] = user_warnings.get(member.id, 0) + 1
+        await i.response.send_message(f"⚠️ {member.mention} הוזהר! פעם {user_warnings[member.id]}. סיבה: {reason}")
+
+@bot.tree.command(name="setup_verify", description="9. פאנל אימות")
 async def sv(i):
-    if await validate_owner(i):
-        emb = discord.Embed(title="🛡️ אימות", description="לחץ למטה לאימות", color=0x2ecc71)
-        await i.channel.send(embed=emb, view=VerifyView()); await i.response.send_message("בוצע.", ephemeral=True)
+    if await validate(i):
+        emb = discord.Embed(title="🛡️ אימות", description="לחץ לאימות", color=0x2ecc71)
+        await i.channel.send(embed=emb, view=VerifyView()); await i.response.send_message("בוצע.")
+
+@bot.tree.command(name="slowmode", description="10. מצב איטי")
+async def slow(i, seconds: int):
+    if await validate(i):
+        await i.channel.edit(slowmode_delay=seconds); await i.response.send_message(f"⏳ {seconds}s")
+
+@bot.tree.command(name="say", description="11. הבוט מדבר")
+async def say(i, text: str):
+    if await validate(i):
+        await i.channel.send(text); await i.response.send_message("נשלח", ephemeral=True)
+
+@bot.tree.command(name="mark_suspect", description="12. סימון חשוד ידני")
+async def ms(i, member: discord.Member):
+    if await validate(i):
+        suspected_list[member.id] = datetime.now(timezone.utc)
+        role = i.guild.get_role(SUSPECT_ROLE_ID)
+        if role: await member.add_roles(role)
+        await i.response.send_message(f"🕵️ {member.name} בשימור עין.")
+
+@bot.tree.command(name="serverinfo", description="13. מידע על השרת")
+async def si(i):
+    emb = discord.Embed(title=i.guild.name, description=f"חברים: {i.guild.member_count}", color=0x3498db)
+    await i.response.send_message(embed=emb)
+
+@bot.tree.command(name="avatar", description="14. הצגת תמונה")
+async def av(i, member: discord.Member = None):
+    m = member or i.user; await i.response.send_message(m.display_avatar.url)
+
+@bot.tree.command(name="ping", description="15. מהירות הבוט")
+async def p(i): await i.response.send_message(f"🏓 {round(bot.latency * 1000)}ms")
 
 # --- Events ---
 @bot.event
 async def on_member_join(member):
     ch = member.guild.get_channel(WELCOME_CH_ID)
-    if ch: await ch.send(f"🔥 ברוך הבא, {member.mention}!")
-    age = datetime.now(timezone.utc) - member.created_at
-    if age.days < ALT_MIN_DAYS:
-        alert_ch = member.guild.get_channel(ATTEMPT_LOG_CH_ID)
-        if alert_ch:
-            emb = discord.Embed(title="🚨 אלט זוהה!", description=f"משתמש: {member.mention}\nותק: {age.days} ימים", color=0xffa500)
-            await alert_ch.send(embed=emb, view=AltActionView(member))
+    if ch: await ch.send(f"🔥 ברוך הבא {member.mention}!")
+    if (datetime.now(timezone.utc) - member.created_at).days < ALT_MIN_DAYS:
+        alert = member.guild.get_channel(ATTEMPT_LOG_CH_ID)
+        if alert:
+            emb = discord.Embed(title="🚨 אלט זוהה!", description=f"{member.mention} חדש!", color=0xffa500)
+            await alert.send(embed=emb, view=AltActionView(member))
 
 @bot.event
 async def on_message(msg):
-    if msg.author.id in suspected_list:
-        suspected_list[msg.author.id] = datetime.now(timezone.utc)
+    if msg.author.id in suspected_list: suspected_list[msg.author.id] = datetime.now(timezone.utc)
     await bot.process_commands(msg)
 
 if TOKEN: bot.run(TOKEN)
