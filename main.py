@@ -7,8 +7,8 @@ from collections import defaultdict
 
 # --- הגדרות ו-IDs ---
 TOKEN = os.getenv('DISCORD_TOKEN')
-OWNER_ROLE_ID = 1499868525844627478  # רול הונר
-LOG_CH_ID = 1503496964732354620       # לוג ניסיונות פריצה
+OWNER_ROLE_ID = 1499868525844627478  # רול אונר
+LOG_CH_ID = 1503496964732354620       # לוג פריצות
 ALT_LOG_ID = 1503464176599695380      # לוג אלטים
 FEEDBACK_CH_ID = 1503475379942461522  # לוג פידבקים
 
@@ -19,40 +19,33 @@ ROLE_SUPPORTER = 1503819239310627068
 ROLE_VIP = 1503817695466881255
 ROLE_TICKET_STAFF = 1501316672345211041
 
-# דאטה (מטבעות ואזהרות)
+# דאטה
 user_balances = defaultdict(int)
 user_warnings = defaultdict(int)
 
-# --- מערכת הגנה: אזהרה מילולית -> 3 מיוט -> 5 קיק ---
+# --- מערכת הגנה קשוחה ---
 async def check_owner_and_punish(i: discord.Interaction):
     if any(role.id == OWNER_ROLE_ID for role in i.user.roles):
         return True
     
-    # אזהרה מילולית מיידית
-    await i.response.send_message(f"❌ {i.user.mention}, זו אזהרה מילולית! אסור לך להשתמש בפקודות אונר.", ephemeral=True)
+    # אזהרה מילולית
+    await i.response.send_message(f"❌ {i.user.mention}, זו אזהרה מילולית! הניסיון נרשם.", ephemeral=True)
     
     user_warnings[i.user.id] += 1
     count = user_warnings[i.user.id]
     
-    # לוג לאונר
     log_ch = i.guild.get_channel(LOG_CH_ID)
     if log_ch:
-        await log_ch.send(f"🚨 **ניסיון פריצה:** המשתמש {i.user.mention} ניסה להשתמש ב-`/{i.command.name}`. אזהרה: {count}/5")
+        await log_ch.send(f"🚨 **ניסיון פריצה:** {i.user.mention} ניסה להשתמש ב-`/{i.command.name}`. אזהרה: {count}/5")
 
     if count == 3:
-        try: await i.user.send("⚠️ הושתקת ל-48 שעות עקב ניסיונות חוזרים להשתמש בפקודות אונר.")
-        except: pass
-        await i.user.timeout(timedelta(days=2), reason="3 ניסיונות שימוש בפקודות אונר")
-        
+        await i.user.timeout(timedelta(days=2), reason="ניסיון שימוש בפקודות אונר")
     elif count >= 5:
-        try: await i.user.send("👞 הועפת מהשרת עקב 5 ניסיונות פריצה למערכת האונר.")
-        except: pass
-        await i.user.kick(reason="5 ניסיונות שימוש בפקודות אונר")
+        await i.user.kick(reason="ניסיון שימוש בפקודות אונר")
         user_warnings[i.user.id] = 0
     return False
 
-# --- Views (ממשקים) ---
-
+# --- Views (חנות, אימות, פידבק) ---
 class ShopView(ui.View):
     def __init__(self): super().__init__(timeout=None)
     @ui.button(label="קנה Supporter 🎗️", style=discord.ButtonStyle.success, custom_id="sh_1")
@@ -63,26 +56,26 @@ class ShopView(ui.View):
     async def b3(self, i, b): await self.buy(i, 15000, ROLE_TICKET_STAFF)
     @ui.button(label="בדיקת יתרה 💳", style=discord.ButtonStyle.secondary, custom_id="sh_bal")
     async def b4(self, i, b):
-        await i.response.send_message(f"💰 יתרה שלך: `{user_balances[i.user.id]}` מטבעות.", ephemeral=True)
+        await i.response.send_message(f"💰 יתרה שלך: `{user_balances[i.user.id]}`", ephemeral=True)
     async def buy(self, i, p, r_id):
-        if user_balances[i.user.id] < p: return await i.response.send_message("❌ אין לך מספיק מטבעות!", ephemeral=True)
+        if user_balances[i.user.id] < p: return await i.response.send_message("❌ אין כסף", ephemeral=True)
         user_balances[i.user.id] -= p
         await i.user.add_roles(i.guild.get_role(r_id))
-        await i.response.send_message("✅ תתחדש! הרול נוסף.", ephemeral=True)
+        await i.response.send_message("✅ תתחדש", ephemeral=True)
 
 class VerifyView(ui.View):
     def __init__(self): super().__init__(timeout=None)
     @ui.button(label="התחל אימות ✅", style=discord.ButtonStyle.green, custom_id="v_btn")
     async def v(self, i, b):
         await i.user.add_roles(i.guild.get_role(MEMBER_ROLE_ID))
-        await i.response.send_message("אומתת בהצלחה!", ephemeral=True)
+        await i.response.send_message("אומתת!", ephemeral=True)
 
-class FeedbackModal(ui.Modal, title="שליחת פידבק"):
-    inp = ui.TextInput(label="מה תרצה להציע או לדווח?", style=discord.TextStyle.paragraph)
+class FeedbackModal(ui.Modal, title="שלח פידבק"):
+    inp = ui.TextInput(label="הפידבק שלך", style=discord.TextStyle.paragraph)
     async def on_submit(self, i):
         ch = i.guild.get_channel(FEEDBACK_CH_ID)
-        if ch: await ch.send(embed=discord.Embed(title="💬 פידבק חדש", description=self.inp.value, color=0x00ffff).set_author(name=i.user.name))
-        await i.response.send_message("הפידבק נשלח בהצלחה!", ephemeral=True)
+        if ch: await ch.send(embed=discord.Embed(title="💬 פידבק", description=self.inp.value, color=0x00ffff).set_author(name=i.user.name))
+        await i.response.send_message("נשלח", ephemeral=True)
 
 class FeedbackView(ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -100,62 +93,81 @@ bot = CyberShield()
 
 @bot.event
 async def on_member_join(member):
-    if (datetime.utcnow() - member.created_at).days < 7: # הגנת אלטים
+    if (datetime.utcnow() - member.created_at).days < 7:
         ch = member.guild.get_channel(ALT_LOG_ID)
-        if ch: await ch.send(f"⚠️ **זיהוי אלט:** {member.mention} פתח חשבון לפני פחות משבוע.")
+        if ch: await ch.send(f"⚠️ **אלט חשוד:** {member.mention}")
 
 @bot.event
 async def on_message(msg):
-    if not msg.author.bot: user_balances[msg.author.id] += 5 # 5 מטבעות להודעה
+    if not msg.author.bot: user_balances[msg.author.id] += 5
     await bot.process_commands(msg)
 
-# --- פקודות Setup וניהול (אונר בלבד) ---
+# --- פקודות אונר בלבד ---
 
-@bot.tree.command(name="setup_shop", description="[OWNER] הקמת החנות המעוצבת")
+@bot.tree.command(name="setup_shop", description="הקמת חנות")
 async def ss(i):
     if await check_owner_and_punish(i):
-        emb = discord.Embed(title="🛒 —— CYBER-STORE MARKET ——", 
-                            description="🎗️ **Supporter** - 2,000\n💎 **VIP** - 5,000\n🛠️ **Staff** - 15,000", color=0x2b2d31)
-        emb.set_footer(text="Developed by NL 👑")
+        emb = discord.Embed(title="🛒 —— CYBER-STORE MARKET ——", description="🎗️ Supporter: 2k\n💎 VIP: 5k\n🛠️ Staff: 15k", color=0x2b2d31)
         await i.channel.send(embed=emb, view=ShopView())
-        await i.response.send_message("החנות הוקמה!", ephemeral=True)
+        await i.response.send_message("הוקם", ephemeral=True)
 
-@bot.tree.command(name="setup_verify", description="[OWNER] הקמת מערכת אימות")
-async def sv(i):
+@bot.tree.command(name="mute", description="השתקת משתמש")
+async def mt(i, member: discord.Member, minutes: int, reason: str = "לא צוינה"):
     if await check_owner_and_punish(i):
-        await i.channel.send(embed=discord.Embed(title="🛡️ אימות", description="לחצו על הכפתור כדי לקבל גישה", color=0x2b2d31), view=VerifyView())
-        await i.response.send_message("אימות הוקם!", ephemeral=True)
+        await member.timeout(timedelta(minutes=minutes), reason=reason)
+        await i.response.send_message(f"🔇 {member.mention} הושתק ל-{minutes} דקות. סיבה: {reason}")
 
-@bot.tree.command(name="setup_feedback", description="[OWNER] הקמת מערכת פידבק")
-async def sf(i):
+@bot.tree.command(name="unmute", description="ביטול השתקה")
+async def um(i, member: discord.Member):
     if await check_owner_and_punish(i):
-        await i.channel.send(embed=discord.Embed(title="💬 פידבק", description="יש לכם הצעה? לחצו למטה", color=0x2b2d31), view=FeedbackView())
-        await i.response.send_message("פידבק הוקם!", ephemeral=True)
+        await member.timeout(None)
+        await i.response.send_message(f"🔊 השתקה בוטלה ל-{member.mention}")
 
-@bot.tree.command(name="add_money", description="[OWNER] הוספת כסף למשתמש")
+@bot.tree.command(name="kick", description="העפת משתמש")
+async def kk(i, member: discord.Member, reason: str = "לא צוינה"):
+    if await check_owner_and_punish(i):
+        await member.kick(reason=reason)
+        await i.response.send_message(f"👞 {member.mention} הועף. סיבה: {reason}")
+
+@bot.tree.command(name="ban", description="הרחקת משתמש")
+async def bn(i, member: discord.Member, reason: str = "לא צוינה"):
+    if await check_owner_and_punish(i):
+        await member.ban(reason=reason)
+        await i.response.send_message(f"🚫 {member.mention} הורחק לצמיתות. סיבה: {reason}")
+
+@bot.tree.command(name="warns_check", description="בדיקת אזהרות של משתמש")
+async def wc(i, member: discord.Member):
+    if await check_owner_and_punish(i):
+        await i.response.send_message(f"⚠️ למשתמש {member.mention} יש `{user_warnings[member.id]}` אזהרות.", ephemeral=True)
+
+@bot.tree.command(name="add_money", description="הוספת כסף")
 async def am(i, member: discord.Member, amount: int):
     if await check_owner_and_punish(i):
         user_balances[member.id] += amount
-        await i.response.send_message(f"✅ נוספו {amount} מטבעות ל-{member.mention}.")
+        await i.response.send_message(f"✅ נוספו {amount} ל-{member.mention}")
 
-@bot.tree.command(name="remove_money", description="[OWNER] הורדת כסף למשתמש")
-async def rm(i, member: discord.Member, amount: int):
-    if await check_owner_and_punish(i):
-        user_balances[member.id] -= amount
-        await i.response.send_message(f"✅ הורדו {amount} מטבעות מ-{member.mention}.")
-
-@bot.tree.command(name="clear", description="[OWNER] מחיקת הודעות")
+@bot.tree.command(name="clear", description="ניקוי צ'אט")
 async def cl(i, amount: int):
     if await check_owner_and_punish(i):
         await i.channel.purge(limit=amount); await i.response.send_message(f"נמחקו {amount}", ephemeral=True)
 
-# --- פקודות משתמש רגילות ---
-@bot.tree.command(name="report", description="דיווח על משתמש")
-async def rep(i, member: discord.Member, reason: str):
-    await i.guild.get_channel(REPORT_LOG_CH_ID).send(f"🚨 דיווח מ{i.user.mention} על {member.mention}: {reason}")
-    await i.response.send_message("נשלח לצוות.", ephemeral=True)
+# פקודות setup נוספות
+@bot.tree.command(name="setup_verify", description="הקמת אימות")
+async def sv(i):
+    if await check_owner_and_punish(i):
+        await i.channel.send(embed=discord.Embed(title="🛡️ אימות", description="לחץ למטה", color=0x2b2d31), view=VerifyView())
+        await i.response.send_message("הוקם", ephemeral=True)
 
-@bot.tree.command(name="ping", description="בדיקת מהירות")
-async def pi(i): await i.response.send_message(f"🏓 {round(bot.latency * 1000)}ms", ephemeral=True)
+@bot.tree.command(name="setup_feedback", description="הקמת פידבק")
+async def sf(i):
+    if await check_owner_and_punish(i):
+        await i.channel.send(embed=discord.Embed(title="💬 פידבק", description="לחץ למטה", color=0x2b2d31), view=FeedbackView())
+        await i.response.send_message("הוקם", ephemeral=True)
+
+# פקודות משתמש
+@bot.tree.command(name="report", description="דיווח")
+async def rep(i, member: discord.Member, reason: str):
+    await i.guild.get_channel(REPORT_LOG_CH_ID).send(f"🚨 דיווח על {member.mention}: {reason}")
+    await i.response.send_message("נשלח", ephemeral=True)
 
 bot.run(TOKEN)
