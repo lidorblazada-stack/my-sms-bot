@@ -93,17 +93,34 @@ class VerifyView(ui.View):
         await i.response.send_message("אומתת בהצלחה!", ephemeral=True)
 
 class AltView(ui.View):
-    def __init__(self, mid): super().__init__(timeout=None); self.mid = mid
+    def __init__(self, mid): 
+        super().__init__(timeout=None)
+        self.mid = mid
+
     @ui.button(label="להעיף 👞", style=discord.ButtonStyle.danger)
     async def k(self, i, b):
         if not any(r.id == OWNER_ROLE_ID for r in i.user.roles): return
         m = i.guild.get_member(self.mid)
-        if m: await m.kick(); await i.response.send_message("הועף", ephemeral=True); await i.message.delete()
+        if m: 
+            await m.kick(reason="חשבון אלט חשוד")
+            await i.response.send_message(f"👞 המשתמש הועף מהשרת.", ephemeral=True)
+            await i.message.delete()
+
     @ui.button(label="להשאיר ✅", style=discord.ButtonStyle.success)
     async def s(self, i, b):
         if not any(r.id == OWNER_ROLE_ID for r in i.user.roles): return
-        await i.response.send_message("אושר", ephemeral=True); await i.message.delete()
+        await i.response.send_message("✅ המשתמש אושר ונשאר בשרת.", ephemeral=True)
+        await i.message.delete()
 
+    @ui.button(label="רול חשוד ⚠️", style=discord.ButtonStyle.secondary)
+    async def h(self, i, b):
+        if not any(r.id == OWNER_ROLE_ID for r in i.user.roles): return
+        m = i.guild.get_member(self.mid)
+        r = i.guild.get_role(SUSPECT_ROLE_ID)
+        if m and r: 
+            await m.add_roles(r)
+            await i.response.send_message(f"⚠️ ניתן רול חשוד ל-{m.name}.", ephemeral=True)
+            await i.message.delete()
 # --- Bot Core ---
 class GuardBot(commands.Bot):
     def __init__(self): super().__init__(command_prefix="!", intents=discord.Intents.all())
