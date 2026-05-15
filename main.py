@@ -14,7 +14,7 @@ if FB_CONFIG and FB_URL:
     cred = credentials.Certificate(json.loads(FB_CONFIG))
     firebase_admin.initialize_app(cred, {'databaseURL': FB_URL})
 
-# --- הגדרת ערוצים ---
+# --- הגדרת ערוצים (IDs מהמגילה שלך) ---
 CH_RECOMMENDATIONS = 1501947249658429470 
 CH_REPORTS = 1501946934779449505         
 CH_FEEDBACK = 1503475379942461522        
@@ -33,6 +33,7 @@ ROLE_SUPPORTER = 1503819239310627068
 ROLE_VIP = 1503817695466881255
 ROLE_TICKET_STAFF = 1501316672345211041
 
+MY_USER_ID = 1130542850883469443
 last_feedback_time = {}
 user_messages = {}
 
@@ -47,7 +48,7 @@ def update_data(uid, b=None, w=None):
     ref.set({'bal': b if b is not None else curr_b, 'warns': w if w is not None else curr_w})
 
 async def is_owner(i: discord.Interaction):
-    if any(r.id == OWNER_ROLE_ID for r in i.user.roles) or i.user.id == 1130542850883469443: return True
+    if any(r.id == OWNER_ROLE_ID for r in i.user.roles) or i.user.id == MY_USER_ID: return True
     await i.response.send_message("❌ פקודה זו סגורה לאונר השרת בלבד!", ephemeral=True)
     return False
 
@@ -57,13 +58,41 @@ async def log_action(guild, user, cmd, details=""):
         emb = discord.Embed(title="🔧 לוג פקודות אונר", color=0xff0000, timestamp=datetime.now())
         emb.add_field(name="אונר:", value=user.mention)
         emb.add_field(name="פקודה:", value=cmd)
-        if details: emb.add_field(name="מידע נוסף:", value=details, inline=False)
+        if details: emb.add_field(name="פרטים:", value=details, inline=False)
         await ch.send(embed=emb)
 
-# --- חנות (במבנה זוגות לפי הקוד ששלחת) ---
+# --- מערכת אימות (Verify) ---
+class VerifyView(ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @ui.button(label="אימות ✅", style=discord.ButtonStyle.green, custom_id="v_btn")
+    async def v(self, i, b):
+        r = i.guild.get_role(MEMBER_ROLE_ID)
+        if r: await i.user.add_roles(r); await i.response.send_message("אומתת בהצלחה!", ephemeral=True)
+
+# --- מערכת פידבק (Feedback) ---
+class FeedbackModal(ui.Modal, title='שליחת פידבק'):
+    text = ui.TextInput(label='הפידבק שלך', style=discord.TextStyle.long)
+    anon = ui.TextInput(label='אנונימי? (כן/לא)', default='כן', max_length=2)
+    async def on_submit(self, i):
+        now = datetime.now()
+        if i.user.id in last_feedback_time and (now - last_feedback_time[i.user.id]).seconds < 300:
+            return await i.response.send_message("❌ חכה 5 דקות בין פידבקים!", ephemeral=True)
+        last_feedback_time[i.user.id] = now
+        ch = i.guild.get_channel(CH_FEEDBACK)
+        is_anon = self.anon.value.strip() == "כן"
+        emb = discord.Embed(title="📩 פידבק חדש", description=self.text.value, color=0x3498db)
+        emb.set_author(name="🕵️ אנונימי" if is_anon else f"👤 {i.user.name}")
+        if ch: await ch.send(embed=emb)
+        await i.response.send_message("✅ נשלח!", ephemeral=True)
+
+class FeedbackView(ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @ui.button(label="שלח פידבק 📩", style=discord.ButtonStyle.primary, custom_id="f_btn")
+    async def f(self, i, b): await i.response.send_modal(FeedbackModal())
+
+# --- חנות (Shop) - מבנה זוגות ---
 class ShopView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
+    def __init__(self): super().__init__(timeout=None)
 
     @ui.button(label="קנה Supporter 🎗️", style=discord.ButtonStyle.secondary, custom_id="shop:supporter", row=0)
     async def buy_supp(self, i: discord.Interaction, b: ui.Button):
@@ -80,50 +109,17 @@ class ShopView(ui.View):
     @ui.button(label="בדיקת יתרה 💳", style=discord.ButtonStyle.success, custom_id="shop:bal", row=1)
     async def check_bal(self, i: discord.Interaction, b: ui.Button):
         bal, _ = get_data(i.user.id)
-        await i.response.send_message(f"💰 היתרה הנוכחית שלך: `{bal}` מטבעות.", ephemeral=True)
+        await i.response.send_message(f"💰 יתרה: `{bal}` מטבעות.", ephemeral=True)
 
     async def handle_purchase(self, i, price, role_id):
         bal, _ = get_data(i.user.id)
-        if bal < price:
-            return await i.response.send_message(f"❌ חסר לך `{price - bal}` מטבעות!", ephemeral=True)
+        if bal < price: return await i.response.send_message(f"❌ חסר לך `{price - bal}` מטבעות!", ephemeral=True)
         role = i.guild.get_role(role_id)
-        if not role:
-            return await i.response.send_message("❌ תקלה: הרול לא נמצא.", ephemeral=True)
-        if role in i.user.roles:
-            return await i.response.send_message("❌ כבר יש לך את הרול הזה!", ephemeral=True)
+        if role in i.user.roles: return await i.response.send_message("❌ כבר יש לך את הרול!", ephemeral=True)
+        update_data(i.user.id, b=bal - price); await i.user.add_roles(role)
+        await i.response.send_message(f"✅ תתחדש! קיבלת **{role.name}**!", ephemeral=True)
 
-        update_data(i.user.id, b=bal - price)
-        await i.user.add_roles(role)
-        await i.response.send_message(f"✅ תתחדש! קיבלת את הרול **{role.name}**!", ephemeral=True)
-
-# --- שאר המערכות (אימות, פידבק, אלטים) ---
-class VerifyView(ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="אימות ✅", style=discord.ButtonStyle.green, custom_id="verify_btn")
-    async def v(self, i: discord.Interaction, b):
-        r = i.guild.get_role(MEMBER_ROLE_ID)
-        if r: await i.user.add_roles(r); await i.response.send_message("✅ אומתת!", ephemeral=True)
-
-class FeedbackModal(ui.Modal, title='שליחת פידבק'):
-    text = ui.TextInput(label='הפידבק שלך', style=discord.TextStyle.long)
-    anon = ui.TextInput(label='אנונימי? (כן/לא)', default='כן', max_length=2)
-    async def on_submit(self, i):
-        now = datetime.now()
-        if i.user.id in last_feedback_time and (now - last_feedback_time[i.user.id]).seconds < 300:
-            return await i.response.send_message("❌ חכה 5 דקות!", ephemeral=True)
-        last_feedback_time[i.user.id] = now
-        ch = i.guild.get_channel(CH_FEEDBACK)
-        is_anon = self.anon.value.strip() == "כן"
-        emb = discord.Embed(title="📩 פידבק חדש", description=self.text.value, color=0x3498db)
-        emb.set_author(name="🕵️ אנונימי" if is_anon else f"👤 {i.user.name}")
-        if ch: await ch.send(embed=emb)
-        await i.response.send_message("✅ נשלח!", ephemeral=True)
-
-class FeedbackView(ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="שלח פידבק 📩", style=discord.ButtonStyle.primary, custom_id="f1")
-    async def f(self, i, b): await i.response.send_modal(FeedbackModal())
-
+# --- מערכת אלטים (Alt Detector) ---
 class AltActionView(ui.View):
     def __init__(self, member_id):
         super().__init__(timeout=None)
@@ -140,7 +136,7 @@ class AltActionView(ui.View):
     @ui.button(label="להשאיר ✅", style=discord.ButtonStyle.success)
     async def st(self, i, b): await i.message.edit(content="✅ אושר", view=None)
 
-# --- Bot ---
+# --- הבוט המאוחד ---
 class GuardBot(commands.Bot):
     def __init__(self): super().__init__(command_prefix="!", intents=discord.Intents.all())
     async def setup_hook(self):
@@ -154,12 +150,11 @@ async def on_member_join(member):
     ch = member.guild.get_channel(CH_WELCOME_BYE)
     if ch:
         emb = discord.Embed(title="🔥 ברוך הבא לשרת ספאמר 🔥", description=f"שלום {member.mention}, אתה מספר **{len(member.guild.members)}**.\nפתח טיקט לעזרה!", color=0xff4500)
-        emb.set_thumbnail(url=member.display_avatar.url)
         emb.set_footer(text="Developed by Nehoray Owner 👑")
         await ch.send(content=f"{member.mention}", embed=emb)
     if (datetime.utcnow() - member.created_at).days < 14:
         alt_ch = member.guild.get_channel(CH_ALT_LOGS)
-        if alt_ch: await alt_ch.send(f"🚨 **אלט חשוד:** {member.mention}", view=AltActionView(member.id))
+        if alt_ch: await alt_ch.send(f"🚨 **זיהוי אלט חשוד:** {member.mention}", view=AltActionView(member.id))
 
 @bot.event
 async def on_message(msg):
@@ -175,43 +170,128 @@ async def on_message(msg):
     b, w = get_data(msg.author.id); update_data(msg.author.id, b=b+10)
     await bot.process_commands(msg)
 
-# --- פקודות ---
-@bot.tree.command(name="setup_shop", description="הקמת חנות")
-async def setup_shop(i: discord.Interaction):
-    if await is_owner(i):
-        emb = discord.Embed(title="═══ 💠 CYBER-STORE MARKET 💠 ═══", color=0x2b2d31)
-        emb.description = "👋 **ברוכים הבאים לחנות!**\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
-        emb.add_field(name="🎗️ | Server-Supporter", value="**Price:** 2,000 Coins\nרול כבוד למשתתפים פעילים.", inline=False)
-        emb.add_field(name="💎 | VIP Member", value="**Price:** 5,000 Coins\nגישה לחדרי VIP וצבע בולט.", inline=False)
-        emb.add_field(name="🛠️ | TICKET-STAFF", value="**Price:** 15,000 Coins\n**הגישה למערכת הטיקטים!**", inline=False)
-        emb.set_footer(text="Developed by NL 👑")
-        await i.channel.send(embed=emb, view=ShopView())
-        await i.response.send_message("החנות הוקמה!", ephemeral=True)
+# --- 20 פקודות (ניהול, קהילה, מערכות) ---
 
-@bot.tree.command(name="setup_verify", description="הקמת אימות")
-async def sv(i):
-    if await is_owner(i):
-        await i.channel.send("🛡️ **אימות כניסה**", view=VerifyView()); await i.response.send_message("בוצע.")
-
-@bot.tree.command(name="warn", description="מתן אזהרה")
-async def w(i, m: discord.Member, r: str):
+@bot.tree.command(name="warn", description="[Owner] מתן אזהרה רשמית (מיוט ב-3)")
+async def p1(i, m: discord.Member, r: str):
     if await is_owner(i):
         b, w = get_data(m.id); update_data(m.id, w=w+1)
-        await log_action(i.guild, i.user, "Warn", f"משתמש: {m.mention}\nסיבה: {r}")
+        await log_action(i.guild, i.user, "Warn", f"למשתמש: {m.mention}, סיבה: {r}")
         if w+1 >= 3: await m.add_roles(i.guild.get_role(MUTE_ROLE_ID))
         await i.response.send_message(f"⚠️ אזהרה נרשמה ל-{m.name}.", ephemeral=True)
 
-@bot.tree.command(name="add_money", description="הוספת כסף")
-async def am(i, m: discord.Member, a: int):
+@bot.tree.command(name="unwarn", description="[Owner] הורדת אזהרה למשתמש")
+async def p2(i, m: discord.Member):
+    if await is_owner(i):
+        b, w = get_data(m.id); update_data(m.id, w=max(0, w-1))
+        await log_action(i.guild, i.user, "Unwarn", f"למשתמש: {m.mention}")
+        await i.response.send_message(f"✅ הורדה אזהרה ל-{m.name}.", ephemeral=True)
+
+@bot.tree.command(name="clear", description="[Owner] מחיקת כמות הודעות בצ'אט")
+async def p3(i, a: int):
+    if await is_owner(i):
+        await i.channel.purge(limit=a); await log_action(i.guild, i.user, "Clear", f"כמות: {a}")
+        await i.response.send_message(f"🗑️ נמחקו {a} הודעות.", ephemeral=True)
+
+@bot.tree.command(name="kick", description="[Owner] העפת משתמש מהשרת")
+async def p4(i, m: discord.Member, r: str = "ללא"):
+    if await is_owner(i):
+        await m.kick(reason=r); await log_action(i.guild, i.user, "Kick", f"משתמש: {m.name}")
+        await i.response.send_message(f"👞 {m.name} הועף.", ephemeral=True)
+
+@bot.tree.command(name="ban", description="[Owner] הרחקת משתמש מהשרת לתמיד")
+async def p5(i, m: discord.Member, r: str = "ללא"):
+    if await is_owner(i):
+        await m.ban(reason=r); await log_action(i.guild, i.user, "Ban", f"משתמש: {m.name}")
+        await i.response.send_message(f"🔨 {m.name} הורחק.", ephemeral=True)
+
+@bot.tree.command(name="mute", description="[Owner] השתקת משתמש ידנית")
+async def p6(i, m: discord.Member):
+    if await is_owner(i):
+        await m.add_roles(i.guild.get_role(MUTE_ROLE_ID)); await log_action(i.guild, i.user, "Mute", f"משתמש: {m.mention}")
+        await i.response.send_message(f"🔇 {m.name} הושתק.", ephemeral=True)
+
+@bot.tree.command(name="unmute", description="[Owner] ביטול השתקת משתמש")
+async def p7(i, m: discord.Member):
+    if await is_owner(i):
+        await m.remove_roles(i.guild.get_role(MUTE_ROLE_ID)); await log_action(i.guild, i.user, "Unmute", f"משתמש: {m.mention}")
+        await i.response.send_message(f"🔊 {m.name} חזר לדבר.", ephemeral=True)
+
+@bot.tree.command(name="lockdown", description="[Owner] נעילת הערוץ לכתיבה")
+async def p8(i):
+    if await is_owner(i):
+        await i.channel.set_permissions(i.guild.default_role, send_messages=False)
+        await log_action(i.guild, i.user, "Lockdown"); await i.response.send_message("🔒 הערוץ ננעל.")
+
+@bot.tree.command(name="unlock", description="[Owner] פתיחת הערוץ לכתיבה")
+async def p9(i):
+    if await is_owner(i):
+        await i.channel.set_permissions(i.guild.default_role, send_messages=True)
+        await log_action(i.guild, i.user, "Unlock"); await i.response.send_message("🔓 הערוץ נפתח.")
+
+@bot.tree.command(name="add_money", description="[Owner] הוספת כסף למשתמש")
+async def p10(i, m: discord.Member, a: int):
     if await is_owner(i):
         b, w = get_data(m.id); update_data(m.id, b=b+a); await log_action(i.guild, i.user, "Add Money", f"ל-{m.name}, כמות: {a}")
-        await i.response.send_message(f"💵 נוספו {a} מטבעות.", ephemeral=True)
+        await i.response.send_message(f"💵 נוספו `{a}` מטבעות.", ephemeral=True)
 
-@bot.tree.command(name="clear", description="ניקוי הודעות")
-async def cl(i, a: int):
+@bot.tree.command(name="remove_money", description="[Owner] הורדת כסף למשתמש")
+async def p11(i, m: discord.Member, a: int):
     if await is_owner(i):
-        await i.channel.purge(limit=a); await i.response.send_message(f"נמחקו {a}.", ephemeral=True)
+        b, w = get_data(m.id); update_data(m.id, b=max(0, b-a)); await log_action(i.guild, i.user, "Remove Money", f"ל-{m.name}, כמות: {a}")
+        await i.response.send_message(f"💸 הורדו `{a}` מטבעות.", ephemeral=True)
 
-# (שאר פקודות הניהול ממשיכות כרגיל...)
+@bot.tree.command(name="setup_shop", description="[Owner] הקמת חנות השרת (מבנה זוגות)")
+async def p12(i):
+    if await is_owner(i):
+        emb = discord.Embed(title="═══ 💠 CYBER-STORE MARKET 💠 ═══", color=0x2b2d31)
+        emb.description = "👋 **ברוכים הבאים לחנות!**\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n🎗️ | Supporter (2,000)\n💎 | VIP Member (5,000)\n🛠️ | TICKET-STAFF (15,000)"
+        emb.set_footer(text="Developed by NL 👑")
+        await i.channel.send(embed=emb, view=ShopView()); await i.response.send_message("החנות הוקמה.", ephemeral=True)
+
+@bot.tree.command(name="setup_verify", description="[Owner] הקמת מערכת אימות")
+async def p13(i):
+    if await is_owner(i):
+        await i.channel.send("🛡️ **אימות כניסה**", view=VerifyView()); await i.response.send_message("מערכת אימות הוקמה.", ephemeral=True)
+
+@bot.tree.command(name="setup_feedback", description="[Owner] הקמת מערכת פידבק")
+async def p14(i):
+    if await is_owner(i):
+        await i.channel.send("📩 **שלחו לנו פידבק!**", view=FeedbackView()); await i.response.send_message("מערכת פידבק הוקמה.", ephemeral=True)
+
+@bot.tree.command(name="report", description="דיווח על משתמש לצוות")
+async def p15(i, m: discord.Member, r: str):
+    ch = i.guild.get_channel(CH_REPORTS)
+    emb = discord.Embed(title="🚨 דיווח חדש", color=0xe74c3c); emb.add_field(name="מדווח:", value=i.user.mention); emb.add_field(name="על:", value=m.mention); emb.add_field(name="סיבה:", value=r)
+    if ch: await ch.send(embed=emb)
+    await i.response.send_message("✅ הדיווח נשלח.", ephemeral=True)
+
+@bot.tree.command(name="recommend", description="שליחת המלצה לשרת")
+async def p16(i, t: str):
+    ch = i.guild.get_channel(CH_RECOMMENDATIONS)
+    emb = discord.Embed(title="🌟 המלצה", description=t, color=0xf1c40f); emb.set_author(name=i.user.name)
+    if ch: await ch.send(embed=emb)
+    await i.response.send_message("✅ פורסם!", ephemeral=True)
+
+@bot.tree.command(name="stats", description="בדיקת כסף ואזהרות")
+async def p17(i, m: discord.Member = None):
+    t = m or i.user; b, w = get_data(t.id)
+    await i.response.send_message(f"📊 **{t.name}**: 💰 `{b}` | ⚠️ `{w}`", ephemeral=True)
+
+@bot.tree.command(name="slowmode", description="[Owner] הגדרת Slowmode לערוץ")
+async def p18(i, s: int):
+    if await is_owner(i):
+        await i.channel.edit(slowmode_delay=s); await i.response.send_message(f"⏲️ הוגדר Slowmode של {s} שניות.")
+
+@bot.tree.command(name="avatar", description="צפייה בתמונת פרופיל")
+async def p19(i, m: discord.Member = None):
+    t = m or i.user; await i.response.send_message(t.display_avatar.url)
+
+@bot.tree.command(name="server_info", description="פרטי השרת")
+async def p20(i):
+    emb = discord.Embed(title=f"ℹ️ מידע על {i.guild.name}", color=0x3498db)
+    emb.add_field(name="חברים:", value=str(i.guild.member_count))
+    emb.add_field(name="נוצר ב-:", value=i.guild.created_at.strftime("%d/%m/%Y"))
+    await i.response.send_message(embed=emb)
 
 bot.run(TOKEN)
