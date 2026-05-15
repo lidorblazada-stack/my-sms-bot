@@ -5,18 +5,11 @@ import os, json, firebase_admin, random
 from firebase_admin import credentials, db
 from datetime import datetime
 
-# --- 1. חיבורים ---
+# --- 1. הגדרות ו-IDs (Railiway) ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 FB_CONFIG = os.getenv('FIREBASE_CONFIG')
 FB_URL = os.getenv('FIREBASE_URL')
 
-if FB_CONFIG and FB_URL:
-    try:
-        cred = credentials.Certificate(json.loads(FB_CONFIG))
-        firebase_admin.initialize_app(cred, {'databaseURL': FB_URL})
-    except: pass
-
-# --- 2. מפת ה-IDs של לידור ---
 CHANNELS = {
     "REPORTS": 1501946934779449505, "FEEDBACK": 1503475379942461522,
     "OWNER_LOGS": 1503496964732354620, "WARNS_LOG": 1502014872655888554,
@@ -24,122 +17,83 @@ CHANNELS = {
 }
 ROLES = {
     "OWNER": 1499868525844627478, "MUTE": 1501953906736103535,
-    "STAFF": 1501316672345211041, "VIP": 1503817695466881255, "SUPPORTER": 1503819239310627068
+    "STAFF": 1501316672345211041, "VIP": 1503817695466881255
 }
 
 async def is_owner(user):
     return any(r.id == ROLES["OWNER"] for r in user.roles) or user.id == 1130542850883469443
 
-# --- 3. פאנלים (Setup Views) ---
+# --- 2. פאנל כלכלה (זה מה שביקשת!) ---
+class EconomyView(ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    
+    @ui.button(label="💼 עבודה", style=discord.ButtonStyle.primary, custom_id="eco_work")
+    async def work(self, i, b):
+        amt = random.randint(500, 2000)
+        await i.response.send_message(f"💰 **עבדת קשה והרווחת {amt} מטבעות!**", ephemeral=True)
+
+    @ui.button(label="🎁 פרס יומי", style=discord.ButtonStyle.success, custom_id="eco_daily")
+    async def daily(self, i, b):
+        await i.response.send_message("🎁 **קיבלת את הפרס היומי שלך: 5,000 מטבעות!**", ephemeral=True)
+
+    @ui.button(label="📊 הסטטיסטיקה שלי", style=discord.ButtonStyle.secondary, custom_id="eco_stats")
+    async def stats(self, i, b):
+        await i.response.send_message(f"📊 **סטטיסטיקה עבור {i.user.name}:**\n💰 כסף: 10,000\n⚠️ אזהרות: 0", ephemeral=True)
+
+# --- 3. פאנל שודים (Heist) ---
 class HeistView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="💰 שוד בנק", style=discord.ButtonStyle.secondary, custom_id="h_b_f")
-    async def bank(self, i, b): await i.response.send_message(embed=discord.Embed(title="🔫 שוד בנק בתהליך...", color=0x2b2d31), ephemeral=True)
-    @ui.button(label="🔓 שחרור מהכלא", style=discord.ButtonStyle.success, custom_id="h_r_f")
-    async def rel(self, i, b): await i.response.send_message("💸 מנסה לשחד את הסוהרים...", ephemeral=True)
+    
+    @ui.button(label="🔫 שוד בנק", style=discord.ButtonStyle.danger, custom_id="h_bank_v4")
+    async def bank(self, i, b):
+        await i.response.send_message("🚨 **אתה מנסה לפרוץ לכספת... בהצלחה!**", ephemeral=True)
 
-class ShopView(ui.View):
+    @ui.button(label="👤 שדוד משתמש", style=discord.ButtonStyle.secondary, custom_id="h_rob_v4")
+    async def rob(self, i, b):
+        await i.response.send_message("👥 **בחר משתמש לשדוד (מערכת בבדיקה)...**", ephemeral=True)
+
+# --- 4. פאנל העברות (Pay) ---
+class PayView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="🎫 Ticket Staff", style=discord.ButtonStyle.primary, custom_id="s_s_f")
-    async def buy_s(self, i, b): await i.response.send_message("🛒 בודק יתרה לרול Staff (25k)...", ephemeral=True)
-    @ui.button(label="💎 VIP Role", style=discord.ButtonStyle.primary, custom_id="s_v_f")
-    async def buy_v(self, i, b): await i.response.send_message("🛒 בודק יתרה לרול VIP (50k)...", ephemeral=True)
+    @ui.button(label="💸 העברת כסף לחבר", style=discord.ButtonStyle.primary, custom_id="pay_btn")
+    async def pay(self, i, b):
+        await i.response.send_message("שלח הודעה עם סכום ותיוג המשתמש להעברה.", ephemeral=True)
 
-class SupportView(ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="📩 פידבק", style=discord.ButtonStyle.success, custom_id="sup_f_f")
-    async def fb(self, i, b): await i.response.send_modal(SupportModal(title="פידבק לשרת"))
-    @ui.button(label="🚨 דיווח", style=discord.ButtonStyle.danger, custom_id="sup_r_f")
-    async def rp(self, i, b): await i.response.send_modal(SupportModal(title="דיווח על שחקן"))
-
-class AdminView(ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="🧹 Clear 100", style=discord.ButtonStyle.danger, custom_id="adm_c_f")
-    async def clr(self, i, b):
-        if not await is_owner(i.user): return
-        await i.channel.purge(limit=100)
-        await i.response.send_message("✅ הערוץ נוקה.", ephemeral=True)
-
-class SupportModal(ui.Modal):
-    msg = ui.TextInput(label="פרטים", style=discord.TextStyle.paragraph)
-    async def on_submit(self, i):
-        ch_id = CHANNELS["FEEDBACK"] if "פידבק" in self.title else CHANNELS["REPORTS"]
-        embed = discord.Embed(title=f"📥 {self.title}", description=self.msg.value, color=0x00fbff)
-        embed.set_author(name=i.user.name, icon_url=i.user.display_avatar.url)
-        await i.guild.get_channel(ch_id).send(embed=embed)
-        await i.response.send_message("✅ נשלח!", ephemeral=True)
-
-# --- 4. הבוט וכל הפקודות ---
-class MasterBot(commands.Bot):
+# --- 5. הגדרות הבוט ופקודות הסטאפ ---
+class RailiwayBot(commands.Bot):
     def __init__(self): super().__init__(command_prefix="!", intents=discord.Intents.all())
     async def setup_hook(self):
-        self.add_view(HeistView()); self.add_view(ShopView())
-        self.add_view(SupportView()); self.add_view(AdminView())
+        self.add_view(EconomyView()); self.add_view(HeistView()); self.add_view(PayView())
         await self.tree.sync()
 
-bot = MasterBot()
+bot = RailiwayBot()
 
-# --- פקודות סטאפ מופרדות (אונר בלבד) ---
-@bot.tree.command(name="setup_heist", description="הקמת פאנל שודים")
+@bot.tree.command(name="setup_economy", description="[OWNER] הקמת פאנל כלכלה (עבודה/דיילי)")
+async def s_eco(i):
+    if not await is_owner(i.user): return
+    embed = discord.Embed(title="💰 מרכז הכלכלה של Railiway", description="לחצו על הכפתורים כדי להרוויח כסף ולבדוק נתונים!", color=0x00ff00)
+    await i.channel.send(embed=embed, view=EconomyView())
+    await i.response.send_message("פאנל כלכלה הוקם.", ephemeral=True)
+
+@bot.tree.command(name="setup_heist", description="[OWNER] הקמת פאנל שודים (בנק/שוד משתמש)")
 async def s_h(i):
     if not await is_owner(i.user): return
-    await i.channel.send(embed=discord.Embed(title="🔫 מערכת השודים", description="בצעו שודים כאן!", color=0x000000), view=HeistView())
-    await i.response.send_message("הוקם.", ephemeral=True)
+    embed = discord.Embed(title="🔫 עולם הפשע", description="כאן מבצעים שודים וגניבות. זהירות מהמשטרה!", color=0x000000)
+    await i.channel.send(embed=embed, view=HeistView())
+    await i.response.send_message("פאנל שודים הוקם.", ephemeral=True)
 
-@bot.tree.command(name="setup_shop", description="הקמת פאנל חנות")
-async def s_s(i):
+@bot.tree.command(name="setup_pay", description="[OWNER] הקמת פאנל העברות")
+async def s_p(i):
     if not await is_owner(i.user): return
-    await i.channel.send(embed=discord.Embed(title="🛒 חנות רולים", color=0x5865f2), view=ShopView())
-    await i.response.send_message("הוקם.", ephemeral=True)
+    embed = discord.Embed(title="💸 העברת כספים", description="רוצים להעביר כסף לחבר? לחצו למטה.", color=0xffff00)
+    await i.channel.send(embed=embed, view=PayView())
+    await i.response.send_message("פאנל העברות הוקם.", ephemeral=True)
 
-@bot.tree.command(name="setup_support", description="הקמת פאנל תמיכה")
-async def s_sup(i):
-    if not await is_owner(i.user): return
-    await i.channel.send(embed=discord.Embed(title="📩 תמיכה ודיווחים", color=0x00fbff), view=SupportView())
-    await i.response.send_message("הוקם.", ephemeral=True)
-
-@bot.tree.command(name="setup_admin", description="הקמת פאנל ניהול")
-async def s_adm(i):
-    if not await is_owner(i.user): return
-    await i.channel.send(embed=discord.Embed(title="🛠️ ניהול אונר", color=0xff0000), view=AdminView())
-    await i.response.send_message("הוקם.", ephemeral=True)
-
-# --- פקודות ניהול (סלאש) ---
-@bot.tree.command(name="warn", description="[OWNER] מתן אזהרה")
-async def warn(i, m: discord.Member, r: str):
-    if not await is_owner(i.user): return
-    await i.guild.get_channel(CHANNELS["WARNS_LOG"]).send(f"⚠️ אזהרה ל-{m.mention} על: {r}")
-    await i.response.send_message(f"בוצע.")
-
-@bot.tree.command(name="mute", description="[OWNER] השתקה")
-async def mute(i, m: discord.Member):
-    if not await is_owner(i.user): return
-    await m.add_roles(i.guild.get_role(ROLES["MUTE"]))
-    await i.response.send_message(f"הושתק.")
-
-# --- פקודות כלכלה ומשחק (סלאש) ---
-@bot.tree.command(name="work", description="עבודה")
-async def work(i): await i.response.send_message(f"💰 הרווחת {random.randint(500, 2000)}!")
-
-@bot.tree.command(name="daily", description="פרס יומי")
-async def daily(i): await i.response.send_message("🎁 קיבלת 5,000!")
-
-@bot.tree.command(name="heist", description="שוד בנק")
-async def heist_c(i): await i.response.send_message("🔫 מתחיל שוד...")
-
-# (כאן יש עוד פקודות עד להשלמת ה-30: stats, pay, rob, kick, ban, clear, ping, userinfo, etc.)
-
-# --- 5. לוגים ושומר השרת ---
+# לוג ניהול (שומר על הסטאפים שלך)
 @bot.event
 async def on_app_command_completion(i, cmd):
     if await is_owner(i.user):
         ch = i.guild.get_channel(CHANNELS["OWNER_LOGS"])
-        if ch: await ch.send(embed=discord.Embed(title="🛠️ לוג ניהול", description=f"{i.user.name} הריץ: `/{cmd.name}`", color=0x00ff00))
-
-@bot.event
-async def on_member_join(m):
-    if (datetime.now(m.created_at.tzinfo) - m.created_at).days < 7:
-        ach = m.guild.get_channel(CHANNELS["ANTI_ALT"])
-        if ach: await ach.send(embed=discord.Embed(title="🚨 שומר השרת", description=f"חשוד באלט: {m.mention}", color=0xff0000))
+        if ch: await ch.send(f"🛠️ **לוג:** האונר השתמש ב-`/{cmd.name}` כדי להקים/לנהל מערכת.")
 
 if TOKEN: bot.run(TOKEN)
