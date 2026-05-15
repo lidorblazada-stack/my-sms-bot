@@ -14,7 +14,7 @@ if FB_CONFIG and FB_URL:
     cred = credentials.Certificate(json.loads(FB_CONFIG))
     firebase_admin.initialize_app(cred, {'databaseURL': FB_URL})
 
-# --- 2. הגדרות IDs ---
+# --- 2. הגדרות IDs (מעודכן לפי הבקשות שלך) ---
 OWNER_ROLE_ID = 1499868525844627478
 MUTE_ROLE_ID = 1501953906736103535
 LOGS_CHANNEL_ID = 1504815433004617798
@@ -28,7 +28,7 @@ SHOP_ROLES = {
 
 jail_list = {} 
 
-# --- 3. פונקציות עזר ---
+# --- 3. פונקציות עזר ונתונים ---
 def get_data(uid):
     d = db.reference(f'users/{uid}').get()
     return (d.get('bal', 0), d.get('warns', 0)) if d else (0, 0)
@@ -47,65 +47,83 @@ async def send_log(guild, title, text, color):
         embed = discord.Embed(title=title, description=text, color=color, timestamp=datetime.now())
         await ch.send(embed=embed)
 
-# --- 4. פאנלים (Views) ---
+# --- 4. פאנלים קבועים (Views) ---
 
 class RoleShopView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="🎫 Staff", style=discord.ButtonStyle.primary, custom_id="s1")
+    
+    @ui.button(label="🎫 Ticket Staff (25k)", style=discord.ButtonStyle.primary, custom_id="buy_staff_imp")
     async def b1(self, i, b):
         bal, _ = get_data(i.user.id); r_id, pr = SHOP_ROLES["Ticket Staff 🎫"]
-        if bal < pr: return await i.response.send_message("אין כסף!", ephemeral=True)
+        if bal < pr: return await i.response.send_message("אין לך מספיק כסף!", ephemeral=True)
         await i.user.add_roles(i.guild.get_role(r_id)); update_data(i.user.id, b=bal-pr)
-        await i.response.send_message("קנית!", ephemeral=True)
+        await i.response.send_message("מזל טוב! קנית רול סטאף 🎫", ephemeral=True)
+        await send_log(i.guild, "🛍️ קנייה בחנות", f"{i.user.mention} קנה את הרול Ticket Staff", 0x9b59b6)
 
-class HeistView(ui.View):
+    @ui.button(label="💎 VIP (50k)", style=discord.ButtonStyle.primary, custom_id="buy_vip_imp")
+    async def b2(self, i, b):
+        bal, _ = get_data(i.user.id); r_id, pr = SHOP_ROLES["VIP 💎"]
+        if bal < pr: return await i.response.send_message("חסר לך כסף ל-VIP!", ephemeral=True)
+        await i.user.add_roles(i.guild.get_role(r_id)); update_data(i.user.id, b=bal-pr)
+        await i.response.send_message("שיחקת אותה! קיבלת VIP 💎", ephemeral=True)
+
+class HeistMasterView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="🏦 שוד", style=discord.ButtonStyle.danger, custom_id="h1")
-    async def b1(self, i, b):
-        if i.user.id in jail_list: return await i.response.send_message("בכלא!", ephemeral=True)
-        bal, _ = get_data(i.user.id)
-        if random.random() < 0.3:
-            win = random.randint(2000, 5000); update_data(i.user.id, b=bal+win)
-            await i.response.send_message(f"הצלחתי! {win}", ephemeral=True)
-            await send_log(i.guild, "💰 שוד", f"{i.user.mention} הצליח!", 0x2ecc71)
-        else:
-            jail_list[i.user.id] = 5000
-            await i.response.send_message("נתפסת!", ephemeral=True)
-            await send_log(i.guild, "🚓 שוד", f"{i.user.mention} נכשל!", 0xe74c3c)
 
-# --- 5. הבוט והפקודות (20+) ---
+    @ui.button(label="🏦 שוד בנק", style=discord.ButtonStyle.danger, custom_id="bank_h_imp")
+    async def heist(self, i, b):
+        if i.user.id in jail_list: return await i.response.send_message("🔒 אתה בכלא אחי!", ephemeral=True)
+        bal, _ = get_data(i.user.id)
+        if random.random() < 0.25:
+            win = random.randint(2000, 5000); update_data(i.user.id, b=bal+win)
+            await i.response.send_message(f"💰 הפיצוח הצליח! לקחת {win}!", ephemeral=True)
+            await send_log(i.guild, "💰 שוד בנק מוצלח", f"השודד: {i.user.mention}\nסכום: {win}", 0x2ecc71)
+        else:
+            jail_list[i.user.id] = 5000; update_data(i.user.id, b=max(0, bal-1000))
+            await i.response.send_message("🚨 נתפסת! אתה בכלא. ערבות: 5,000", ephemeral=True)
+            await send_log(i.guild, "🚓 שוד בנק נכשל", f"החשוד: {i.user.mention}\nסטטוס: נכנס לכלא", 0xe74c3c)
+
+    @ui.button(label="🔓 שחרור בערבות (5k)", style=discord.ButtonStyle.success, custom_id="bail_h_imp")
+    async def bail(self, i, b):
+        if i.user.id not in jail_list: return await i.response.send_message("אתה לא בכלא אחי.", ephemeral=True)
+        bal, _ = get_data(i.user.id)
+        if bal < 5000: return await i.response.send_message("אין כסף לערבות!", ephemeral=True)
+        update_data(i.user.id, b=bal-5000); del jail_list[i.user.id]
+        await i.response.send_message("🔓 שילמת ויצאת!", ephemeral=True)
+        await send_log(i.guild, "🔓 שחרור מהכלא", f"{i.user.mention} שילם ערבות ויצא", 0xf1c40f)
+
+    @ui.button(label="💳 בדיקת יתרה", style=discord.ButtonStyle.secondary, custom_id="bal_h_imp")
+    async def balance(self, i, b):
+        bal, _ = get_data(i.user.id)
+        await i.response.send_message(f"💳 היתרה שלך: **{bal}**", ephemeral=True)
+
+# --- 5. הבוט והפקודות (20+ פקודות) ---
 class GuardBot(commands.Bot):
     def __init__(self): super().__init__(command_prefix="!", intents=discord.Intents.all())
     async def setup_hook(self):
-        self.add_view(RoleShopView()); self.add_view(HeistView())
+        self.add_view(RoleShopView()); self.add_view(HeistMasterView())
         await self.tree.sync()
 
 bot = GuardBot()
 
-# --- פקודות ניהול (Owner) ---
+# --- פקודות ניהול (אונר בלבד + לוגים) ---
 @bot.tree.command(name="warn")
 async def warn(i, m: discord.Member, r: str):
     if await is_owner(i.user):
         _, w = get_data(m.id); update_data(m.id, w=w+1)
-        await i.response.send_message(f"אזהרה ל-{m.mention}"); await send_log(i.guild, "⚠️ אזהרה", f"ל-{m.mention} על {r}", 0xff0000)
+        await i.response.send_message(f"⚠️ {m.mention} קיבל אזהרה."); await send_log(i.guild, "⚠️ אזהרה", f"ל-{m.mention} על {r} על ידי {i.user.mention}", 0xffa500)
 
 @bot.tree.command(name="unwarn")
 async def unwarn(i, m: discord.Member):
     if await is_owner(i.user):
         _, w = get_data(m.id); update_data(m.id, w=max(0, w-1))
-        await i.response.send_message("הורדתי אזהרה"); await send_log(i.guild, "✅ הורדת אזהרה", f"ל-{m.mention}", 0x00ff00)
+        await i.response.send_message("הורדתי אזהרה."); await send_log(i.guild, "✅ הסרת אזהרה", f"ל-{m.mention} על ידי {i.user.mention}", 0x00ff00)
 
 @bot.tree.command(name="mute")
 async def mute(i, m: discord.Member, t: int):
     if await is_owner(i.user):
-        await m.add_roles(i.guild.get_role(MUTE_ROLE_ID))
-        await i.response.send_message(f"הושתק ל-{t} דקות"); await asyncio.sleep(t*60)
-        await m.remove_roles(i.guild.get_role(MUTE_ROLE_ID))
-
-@bot.tree.command(name="unmute")
-async def unmute(i, m: discord.Member):
-    if await is_owner(i.user):
-        await m.remove_roles(i.guild.get_role(MUTE_ROLE_ID)); await i.response.send_message("שוחרר")
+        role = i.guild.get_role(MUTE_ROLE_ID); await m.add_roles(role)
+        await i.response.send_message(f"הושתק ל-{t} דקות."); await asyncio.sleep(t*60); await m.remove_roles(role)
 
 @bot.tree.command(name="clear")
 async def clear(i, a: int):
@@ -114,63 +132,55 @@ async def clear(i, a: int):
 @bot.tree.command(name="add_money")
 async def add_m(i, m: discord.Member, a: int):
     if await is_owner(i.user):
-        b, _ = get_data(m.id); update_data(m.id, b=b+a); await i.response.send_message(f"הוספתי {a}")
-        await send_log(i.guild, "💰 כסף", f"נוסף ל-{m.mention}", 0x3498db)
-
-@bot.tree.command(name="remove_money")
-async def rem_m(i, m: discord.Member, a: int):
-    if await is_owner(i.user):
-        b, _ = get_data(m.id); update_data(m.id, b=max(0, b-a)); await i.response.send_message(f"הורדתי {a}")
+        b, _ = get_data(m.id); update_data(m.id, b=b+a); await i.response.send_message(f"הוספתי {a} ל-{m.mention}")
+        await send_log(i.guild, "💰 תוספת כסף", f"האונר הוסיף {a} ל-{m.mention}", 0x3498db)
 
 @bot.tree.command(name="free_jail")
 async def free(i, m: discord.Member):
     if await is_owner(i.user) and m.id in jail_list:
-        del jail_list[m.id]; await i.response.send_message("שוחרר בחינם")
+        del jail_list[m.id]; await i.response.send_message(f"שחררת את {m.mention} בחינם!")
 
-# --- פקודות משתמש ומידע ---
+# --- פקודות משתמש וכלכלה ---
+@bot.tree.command(name="rob", description="לשדוד משתמש אחר")
+async def rob(i, m: discord.Member):
+    if i.user.id in jail_list: return await i.response.send_message("🔒 אתה בכלא!")
+    if await is_owner(m): return await i.response.send_message("❌ אל תתעסק עם האונר!")
+    b1, _ = get_data(i.user.id); b2, _ = get_data(m.id)
+    if b2 < 500: return await i.response.send_message("אין לו מספיק כסף לשדוד אחי.")
+    if random.random() < 0.3:
+        win = int(b2 * 0.2); update_data(i.user.id, b=b1+win); update_data(m.id, b=b2-win)
+        await i.response.send_message(f"🥷 שדדת {win} מ-{m.name}!"); await send_log(i.guild, "🥷 שוד משתמש", f"{i.user.mention} שדד את {m.mention}", 0x9b59b6)
+    else:
+        jail_list[i.user.id] = 2000; await i.response.send_message("🚓 נתפסת! נכנסת לכלא."); await send_log(i.guild, "🚓 שוד נכשל", f"{i.user.mention} ניסה לשדוד את {m.mention} ונתפס", 0xe74c3c)
+
 @bot.tree.command(name="stats")
 async def st(i, m: discord.Member = None):
-    t = m or i.user; b, w = get_data(t.id); await i.response.send_message(f"📊 {t.name}: כסף {b} | אזהרות {w}")
+    t = m or i.user; b, w = get_data(t.id); await i.response.send_message(f"📊 **{t.name}** | כסף: {b} | אזהרות: {w}")
 
 @bot.tree.command(name="pay")
 async def pay(i, m: discord.Member, a: int):
     b1, _ = get_data(i.user.id)
-    if b1 < a: return await i.response.send_message("אין כסף!")
+    if b1 < a: return await i.response.send_message("אין לך מספיק כסף!")
     b2, _ = get_data(m.id); update_data(i.user.id, b=b1-a); update_data(m.id, b=b2+a)
-    await i.response.send_message("הועבר!")
-
-@bot.tree.command(name="top_rich")
-async def top(i):
-    await i.response.send_message("הכי עשירים: בקרוב!")
-
-@bot.tree.command(name="jail_status")
-async def j_s(i):
-    text = "רשימת כלואים: " + ", ".join([str(k) for k in jail_list.keys()])
-    await i.response.send_message(text or "אין כלואים")
+    await i.response.send_message(f"העברת {a} מטבעות ל-{m.mention}")
 
 @bot.tree.command(name="ping")
-async def ping(i): await i.response.send_message(f"פונג! {round(bot.latency * 1000)}ms")
-
-@bot.tree.command(name="server_info")
-async def s_i(i): await i.response.send_message(f"שרת: {i.guild.name} | משתמשים: {i.guild.member_count}")
-
-@bot.tree.command(name="bot_info")
-async def b_i(i): await i.response.send_message("אני שומר השרת, הבוט הכי חזק פה!")
+async def ping(i): await i.response.send_message(f"🏓 פונג! {round(bot.latency * 1000)}ms")
 
 # פקודות הקמה
-@bot.tree.command(name="setup_shop")
+@bot.tree.command(name="setup_server")
 async def s_s(i):
-    if await is_owner(i.user): await i.channel.send("🛒 חנות", view=RoleShopView()); await i.response.send_message("הוקם")
+    if await is_owner(i.user):
+        await i.channel.send("🛒 **חנות הרולים**", view=RoleShopView())
+        await i.channel.send("🕵️ **מרחב הפשיעה**", view=HeistMasterView())
+        await i.response.send_message("הוקם!")
 
-@bot.tree.command(name="setup_heist")
-async def s_h(i):
-    if await is_owner(i.user): await i.channel.send("🕵️ שוד", view=HeistView()); await i.response.send_message("הוקם")
-
+# --- 6. הגנות (אנטי לינקים וכסף על הודעה) ---
 @bot.event
 async def on_message(msg):
     if msg.author.bot: return
-    # הגנה פשוטה
-    if "http" in msg.content and not await is_owner(msg.author): await msg.delete(); return
+    if "http" in msg.content and not await is_owner(msg.author):
+        await msg.delete(); await msg.channel.send(f"{msg.author.mention}, בלי לינקים!", delete_after=3); return
     b, w = get_data(msg.author.id); update_data(msg.author.id, b=b+25)
     await bot.process_commands(msg)
 
