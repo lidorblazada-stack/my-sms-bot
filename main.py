@@ -3,13 +3,7 @@ from discord import ui, app_commands
 from discord.ext import commands
 from datetime import timedelta, datetime
 import os, json, firebase_admin, random
-from firebase_admin import credentials, dbimport discord
-from discord import ui, app_commands
-from discord.ext import commands
-from datetime import timedelta, datetime
-import os, json, firebase_admin, random
 from firebase_admin import credentials, db
-
 # --- חיבור Firebase ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 FB_CONFIG = os.getenv('FIREBASE_CONFIG')
