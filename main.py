@@ -35,53 +35,54 @@ def update_data(uid, b=None, w=None):
 async def is_owner_check(user):
     return any(r.id == OWNER_ROLE_ID for r in user.roles) or user.id == MY_USER_ID
 
-# --- 4. מודאלים (חלונות קופצים) ---
-class RecommendationModal(ui.Modal, title="💡 המלצה חדשה לשרת"):
-    rec = ui.TextInput(label="מה ההמלצה שלך?", style=discord.TextStyle.paragraph, required=True)
-    async def on_submit(self, i: discord.Interaction):
-        ch = i.guild.get_channel(CH_RECOMMENDATIONS)
-        if ch: await ch.send(embed=discord.Embed(title="💡 המלצה חדשה", description=self.rec.value, color=0x00ff00).set_footer(text=f"מאת: {i.user}"))
-        await i.response.send_message("ההמלצה נשלחה בהצלחה!", ephemeral=True)
-
-class ReportModal(ui.Modal, title="🚨 דיווח חדש"):
-    target = ui.TextInput(label="על מי/מה הדיווח?", required=True)
-    reason = ui.TextInput(label="פירוט הדיווח", style=discord.TextStyle.paragraph, required=True)
-    async def on_submit(self, i: discord.Interaction):
-        ch = i.guild.get_channel(CH_REPORTS)
-        if ch: await ch.send(embed=discord.Embed(title="🚨 דיווח חדש", description=f"**יעד:** {self.target.value}\n**פירוט:** {self.reason.value}", color=0xff0000).set_footer(text=f"מאת: {i.user}"))
-        await i.response.send_message("הדיווח התקבל ויועבר לטיפול.", ephemeral=True)
-
-# --- 5. פאנלים קבועים (Persistent Views) ---
-class RecommendationView(ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="שלח המלצה 💡", style=discord.ButtonStyle.success, custom_id="btn_rec_kill")
-    async def rec_b(self, i, b): await i.response.send_modal(RecommendationModal())
-
-class ReportView(ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="דווח כאן 🚨", style=discord.ButtonStyle.danger, custom_id="btn_rep_kill")
-    async def rep_b(self, i, b): await i.response.send_modal(ReportModal())
-
-class HeistPanelView(ui.View):
+# --- 4. מערכת החנות ---
+class ShopView(ui.View):
     def __init__(self): super().__init__(timeout=None)
     
-    @ui.button(label="שוד בנק 🏦", style=discord.ButtonStyle.danger, custom_id="h_bank_kill")
+    @ui.button(label="קנה חסינות משוד (5000)", style=discord.ButtonStyle.success, custom_id="shop_shield")
+    async def buy_shield(self, i, b):
+        bal, _ = get_data(i.user.id)
+        if bal < 5000: return await i.response.send_message("אין לך מספיק כסף אחי!", ephemeral=True)
+        update_data(i.user.id, b=bal-5000)
+        await i.response.send_message("🛡️ קנית חסינות! (זמני למחזור הקרוב)", ephemeral=True)
+
+    @ui.button(label="הורדת אזהרה (10000)", style=discord.ButtonStyle.danger, custom_id="shop_warn")
+    async def buy_warn_rem(self, i, b):
+        bal, warns = get_data(i.user.id)
+        if bal < 10000 or warns <= 0: return await i.response.send_message("או שאין לך כסף או שאין לך אזהרות!", ephemeral=True)
+        update_data(i.user.id, b=bal-10000, w=warns-1)
+        await i.response.send_message("✅ אזהרה אחת הוסרה מחשבונך!", ephemeral=True)
+
+# --- 5. פאנלים קבועים (Heist, Rec, Rep) ---
+class HeistPanelView(ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @ui.button(label="שוד בנק 🏦", style=discord.ButtonStyle.danger, custom_id="h_bank_final")
     async def bank(self, i, b):
         bal, _ = get_data(i.user.id)
         if random.random() < 0.2:
-            win = random.randint(300, 800); update_data(i.user.id, b=bal+win)
-            await i.response.send_message(f"💰 שוד הבנק הצליח! הרווחת {win} מטבעות!", ephemeral=True)
+            win = random.randint(500, 1000); update_data(i.user.id, b=bal+win)
+            await i.response.send_message(f"💰 הבנק נפרץ! הרווחת {win}!", ephemeral=True)
         else:
-            update_data(i.user.id, b=max(0, bal-500)); await i.response.send_message("🚨 האזעקה הופעלה! נתפסת ונקנסת ב-500 מטבעות.", ephemeral=True)
+            update_data(i.user.id, b=max(0, bal-600)); await i.response.send_message("🚨 נתפסת!", ephemeral=True)
 
-    @ui.button(label="שוד משתמש 🥷", style=discord.ButtonStyle.primary, custom_id="h_user_kill")
-    async def user_rob(self, i, b):
-        await i.response.send_message("כדי לשדוד משתמש, השתמש בפקודת הסלאש הייעודית (בקרוב בממשק הכפתורים).", ephemeral=True)
-
-    @ui.button(label="היתרה שלי 💳", style=discord.ButtonStyle.secondary, custom_id="h_bal_kill")
+    @ui.button(label="היתרה שלי 💳", style=discord.ButtonStyle.secondary, custom_id="h_bal_final")
     async def my_bal(self, i, b):
         bal, _ = get_data(i.user.id)
-        await i.response.send_message(f"💳 היתרה הנוכחית שלך: **{bal}** מטבעות.", ephemeral=True)
+        await i.response.send_message(f"💳 יתרה: **{bal}**", ephemeral=True)
+
+class RecommendationView(ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @ui.button(label="שלח המלצה 💡", style=discord.ButtonStyle.success, custom_id="rec_final")
+    async def rec_b(self, i, b):
+        modal = ui.Modal(title="💡 המלצה")
+        inp = ui.TextInput(label="מה ההמלצה?", style=discord.TextStyle.paragraph)
+        modal.add_item(inp)
+        async def callback(inter):
+            ch = inter.guild.get_channel(CH_RECOMMENDATIONS)
+            if ch: await ch.send(f"💡 המלצה מ{inter.user}: {inp.value}")
+            await inter.response.send_message("נשלח!", ephemeral=True)
+        modal.on_submit = callback
+        await i.response.send_modal(modal)
 
 # --- 6. בוט ופקודות Setup ---
 class GuardBot(commands.Bot):
@@ -89,28 +90,33 @@ class GuardBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(HeistPanelView())
         self.add_view(RecommendationView())
-        self.add_view(ReportView())
+        self.add_view(ShopView())
         await self.tree.sync()
 
 bot = GuardBot()
 
+@bot.tree.command(name="setup_shop", description="הקמת החנות")
+async def s_shop(i: discord.Interaction):
+    if await is_owner_check(i.user):
+        await i.channel.send("🛒 **ברוכים הבאים לחנות השרת!**", view=ShopView())
+        await i.response.send_message("החנות הוקמה!", ephemeral=True)
+
 @bot.tree.command(name="setup_heist")
 async def s_h(i: discord.Interaction):
     if await is_owner_check(i.user):
-        emb = discord.Embed(title="🕵️ Heist Zone", description="ברוכים הבאים לעולם הפשע. שוד פעם בשעה, מקסימום 300 למשתמש.", color=0x2b2d31)
-        await i.channel.send(embed=emb, view=HeistPanelView())
-        await i.response.send_message("פאנל שודים הוקם!", ephemeral=True)
+        await i.channel.send("🕵️ **פאנל פשיעה**", view=HeistPanelView())
+        await i.response.send_message("הוקם!", ephemeral=True)
 
 @bot.tree.command(name="setup_recommendations")
-async def s_rec(i: discord.Interaction):
+async def s_r(i: discord.Interaction):
     if await is_owner_check(i.user):
-        await i.channel.send("💡 **יש לכם המלצה לשיפור השרת? נשמח לשמוע!**", view=RecommendationView())
-        await i.response.send_message("פאנל המלצות הוקם!", ephemeral=True)
+        await i.channel.send("💡 **שלחו המלצות כאן:**", view=RecommendationView())
+        await i.response.send_message("הוקם!", ephemeral=True)
 
-@bot.tree.command(name="setup_reports")
-async def s_rep(i: discord.Interaction):
-    if await is_owner_check(i.user):
-        await i.channel.send("🚨 **דיווחים על תקלות או משתמשים בעייתיים:**", view=ReportView())
-        await i.response.send_message("פאנל דיווחים הוקם!", ephemeral=True)
+@bot.event
+async def on_message(msg):
+    if msg.author.bot: return
+    b, w = get_data(msg.author.id); update_data(msg.author.id, b=b+10)
+    await bot.process_commands(msg)
 
 bot.run(TOKEN)
