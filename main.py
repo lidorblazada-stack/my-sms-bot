@@ -5,12 +5,25 @@ import os, json, firebase_admin, random, asyncio
 from firebase_admin import credentials, db
 from datetime import datetime
 
-# --- הגדרות IDs ---
+# --- 1. חיבור משתני סביבה (חובה עבור Render!) ---
+# תוודא ששמת את אלו ב-Variables ב-Render
+TOKEN = os.getenv('DISCORD_TOKEN') 
+FB_CONFIG = os.getenv('FIREBASE_CONFIG')
+FB_URL = os.getenv('FIREBASE_URL')
+
+# חיבור ל-Firebase
+if FB_CONFIG and FB_URL:
+    cred = credentials.Certificate(json.loads(FB_CONFIG))
+    firebase_admin.initialize_app(cred, {'databaseURL': FB_URL})
+
+# --- 2. הגדרות IDs ---
 OWNER_ROLE_ID = 1499868525844627478
 MUTE_ROLE_ID = 1501953906736103535
 LOGS_CHANNEL_ID = 1504815433004617798
-VERIFY_ROLE_ID = 1501953906736103535 # הרול שניתן באימות
-FEEDBACK_CHANNEL_ID = 1504815433004617798 # ערוץ שאליו יגיעו הפידבקים
+VERIFY_ROLE_ID = 1501953906736103535 
+FEEDBACK_CHANNEL_ID = 1504815433004617798
+WELCOME_CHANNEL_ID = 1501946934779449505
+AUTO_ROLE_ID = 1501953906736103535
 
 SHOP_ROLES = {
     "Ticket Staff 🎫": [1501316672345211041, 25000],
@@ -20,7 +33,7 @@ SHOP_ROLES = {
 
 jail_list = {}
 
-# --- פונקציות עזר (Firebase ונתונים) ---
+# --- פונקציות עזר ---
 def get_data(uid):
     d = db.reference(f'users/{uid}').get()
     return (d.get('bal', 0), d.get('warns', 0)) if d else (0, 0)
@@ -35,33 +48,28 @@ async def is_owner(user):
 
 # --- פאנלים (Views) ---
 
-# 1. פאנל אימות (Verify)
 class VerifyView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="✅ אימות חשבון", style=discord.ButtonStyle.success, custom_id="verify_btn")
-    async def verify(self, i, b):
-        role = i.guild.get_role(VERIFY_ROLE_ID)
-        await i.user.add_roles(role)
-        await i.response.send_message("אומתת בהצלחה! ברוך הבא לשרת.", ephemeral=True)
+    @ui.button(label="✅ אימות חשבון", style=discord.ButtonStyle.success, custom_id="v_lidor")
+    async def v(self, i, b):
+        await i.user.add_roles(i.guild.get_role(VERIFY_ROLE_ID))
+        await i.response.send_message("אומתת!", ephemeral=True)
 
-# 2. פאנל פידבק (Feedback Modal)
-class FeedbackModal(ui.Modal, title="שליחת פידבק לצוות"):
-    msg = ui.TextInput(label="הפידבק שלך", style=discord.TextStyle.paragraph, placeholder="רשום כאן מה שבא לך...")
+class FeedbackModal(ui.Modal, title="פידבק ללידור"):
+    msg = ui.TextInput(label="מה תרצה להגיד לנו?", style=discord.TextStyle.paragraph)
     async def on_submit(self, i):
         ch = i.guild.get_channel(FEEDBACK_CHANNEL_ID)
-        embed = discord.Embed(title="📢 פידבק חדש!", description=f"**מאת:** {i.user.mention}\n**הודעה:**\n{self.msg.value}", color=0x00fbff)
-        await ch.send(embed=embed)
-        await i.response.send_message("תודה! הפידבק שלך נשלח לצוות.", ephemeral=True)
+        await ch.send(f"📩 **פידבק מ-{i.user.mention}:**\n{self.msg.value}")
+        await i.response.send_message("נשלח!", ephemeral=True)
 
 class FeedbackView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="fb_btn")
-    async def open_fb(self, i, b): await i.response.send_modal(FeedbackModal())
+    @ui.button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="f_lidor")
+    async def f(self, i, b): await i.response.send_modal(FeedbackModal())
 
-# 3. פאנל חנות ופשיעה (מופרדים)
 class RoleShopView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="🎫 Ticket Staff (25k)", style=discord.ButtonStyle.primary, custom_id="shop_1")
+    @ui.button(label="🎫 Ticket Staff (25k)", style=discord.ButtonStyle.primary, custom_id="s_1")
     async def b1(self, i, b):
         bal, _ = get_data(i.user.id); r_id, pr = SHOP_ROLES["Ticket Staff 🎫"]
         if bal < pr: return await i.response.send_message("אין כסף!", ephemeral=True)
@@ -70,50 +78,66 @@ class RoleShopView(ui.View):
 
 class HeistView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="🏦 שוד בנק", style=discord.ButtonStyle.danger, custom_id="h_bank")
-    async def heist(self, i, b):
-        if i.user.id in jail_list: return await i.response.send_message("🔒 אתה בכלא!", ephemeral=True)
+    @ui.button(label="🏦 שוד בנק", style=discord.ButtonStyle.danger, custom_id="h_1")
+    async def h(self, i, b):
+        if i.user.id in jail_list: return await i.response.send_message("בכלא!", ephemeral=True)
         bal, _ = get_data(i.user.id)
         if random.random() < 0.25:
             win = random.randint(2000, 6000); update_data(i.user.id, b=bal+win)
-            await i.response.send_message(f"💰 הצלחת! הרווחת {win}", ephemeral=True)
+            await i.response.send_message(f"💰 הצלחת! {win}", ephemeral=True)
         else:
-            jail_list[i.user.id] = 5000; update_data(i.user.id, b=max(0, bal-1000))
-            await i.response.send_message("🚨 נתפסת!", ephemeral=True)
+            jail_list[i.user.id] = 5000; await i.response.send_message("🚓 נתפסת!", ephemeral=True)
 
-# --- הגדרת הבוט ופקודות הקמה מופרדות ---
+# --- הקמת הבוט ---
 class GuardBot(commands.Bot):
     def __init__(self): super().__init__(command_prefix="!", intents=discord.Intents.all())
     async def setup_hook(self):
-        self.add_view(VerifyView()); self.add_view(FeedbackView()); self.add_view(RoleShopView()); self.add_view(HeistView())
+        self.add_view(VerifyView()); self.add_view(FeedbackView())
+        self.add_view(RoleShopView()); self.add_view(HeistView())
         await self.tree.sync()
 
 bot = GuardBot()
 
-@bot.tree.command(name="setup_verify", description="הקמת פאנל אימות")
+# --- פקודות הקמה מופרדות ---
+@bot.tree.command(name="setup_verify")
 async def s_v(i):
     if await is_owner(i.user):
-        await i.channel.send("🛡️ **אימות חשבון**\nלחץ על הכפתור כדי לקבל גישה לשרת.", view=VerifyView())
-        await i.response.send_message("בוצע!", ephemeral=True)
+        await i.channel.send("🛡️ **אימות**", view=VerifyView()); await i.response.send_message("הוקם")
 
-@bot.tree.command(name="setup_feedback", description="הקמת פאנל פידבק")
+@bot.tree.command(name="setup_feedback")
 async def s_f(i):
     if await is_owner(i.user):
-        await i.channel.send("📩 **הצעות ופידבקים**\nיש לכם הצעה לשיפור? נשמח לשמוע!", view=FeedbackView())
-        await i.response.send_message("בוצע!", ephemeral=True)
+        await i.channel.send("📩 **פידבקים**", view=FeedbackView()); await i.response.send_message("הוקם")
 
-@bot.tree.command(name="setup_shop", description="הקמת חנות רולים")
+@bot.tree.command(name="setup_shop")
 async def s_s(i):
     if await is_owner(i.user):
-        await i.channel.send("🛒 **חנות רולים רשמית**", view=RoleShopView())
-        await i.response.send_message("בוצע!", ephemeral=True)
+        await i.channel.send("🛒 **חנות**", view=RoleShopView()); await i.response.send_message("הוקם")
 
-@bot.tree.command(name="setup_heist", description="הקמת פאנל פשיעה")
+@bot.tree.command(name="setup_heist")
 async def s_h(i):
     if await is_owner(i.user):
-        await i.channel.send("🕵️ **מרחב הפשיעה והשחרור**", view=HeistView())
-        await i.response.send_message("בוצע!", ephemeral=True)
+        await i.channel.send("🕵️ **פשיעה**", view=HeistView()); await i.response.send_message("הוקם")
 
-# (כל שאר 20 הפקודות - stats, add_money, rob, warn וכו' - נמצאות פה)
+# --- פקודות ניהול וכלכלה (השאר) ---
+@bot.tree.command(name="stats")
+async def st(i, m: discord.Member = None):
+    t = m or i.user; b, w = get_data(t.id); await i.response.send_message(f"📊 {t.name}: {b} מטבעות")
 
-bot.run(TOKEN)
+@bot.tree.command(name="add_money")
+async def add_m(i, m: discord.Member, a: int):
+    if await is_owner(i.user):
+        b, _ = get_data(m.id); update_data(m.id, b=b+a); await i.response.send_message("בוצע")
+
+# --- אירועים ---
+@bot.event
+async def on_message(msg):
+    if msg.author.bot: return
+    b, w = get_data(msg.author.id); update_data(msg.author.id, b=b+25)
+    await bot.process_commands(msg)
+
+# הפעלה סופית - TOKEN חייב להיות מוגדר למעלה!
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("Error: TOKEN is missing!")
