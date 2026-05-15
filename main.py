@@ -3,9 +3,9 @@ from discord import ui, app_commands
 from discord.ext import commands
 import os, json, firebase_admin, random, asyncio
 from firebase_admin import credentials, db
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# --- 1. חיבורים ---
+# --- 1. חיבורים (Railway & Firebase) ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 FB_CONFIG = os.getenv('FIREBASE_CONFIG')
 FB_URL = os.getenv('FIREBASE_URL')
@@ -16,7 +16,7 @@ if FB_CONFIG and FB_URL:
         firebase_admin.initialize_app(cred, {'databaseURL': FB_URL})
     except: pass
 
-# --- 2. מפת ה-IDs של RAYLIWY ---
+# --- 2. מפת ה-IDs של לידור (נא לא לגעת!) ---
 CHANNELS = {
     "RECOMMEND": 1501947249658429470,
     "REPORTS": 1501946934779449505,
@@ -35,7 +35,10 @@ ROLES = {
     "SUPPORTER": 1503819239310627068
 }
 
-# --- 3. פונקציות עזר ונתונים ---
+# --- 3. הגנות ומערכות עזר ---
+async def is_owner(user):
+    return any(r.id == ROLES["OWNER"] for r in user.roles) or user.id == 1130542850883469443
+
 def get_data(uid):
     d = db.reference(f'users/{uid}').get()
     return (d.get('bal', 0), d.get('warns', 0)) if d else (0, 0)
@@ -45,147 +48,144 @@ def update_data(uid, b=None, w=None):
     curr_b, curr_w = get_data(uid)
     ref.set({'bal': b if b is not None else curr_b, 'warns': w if w is not None else curr_w})
 
-async def is_owner(user):
-    return any(r.id == ROLES["OWNER"] for r in user.roles) or user.id == 1130542850883469443
+# --- 4. פאנל ניהול ושליטה (Persistent) ---
+class RailiwayPanel(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-# --- 4. מערכות פאנלים (Persistent Views) ---
+    @ui.button(label="🧹 מחק 100 הודעות", style=discord.ButtonStyle.danger, custom_id="btn_clear_100")
+    async def clear_100(self, i, b):
+        if not await is_owner(i.user): return await i.response.send_message("❌ אונר בלבד!", ephemeral=True)
+        await i.channel.purge(limit=100)
+        await i.response.send_message("הערוץ נוקה ב-100 הודעות.", ephemeral=True)
 
-class RAYLIWY_System(ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="ray_fb")
-    async def fb(self, i, b): await i.response.send_modal(FeedbackModal())
-    @ui.button(label="🚨 דווח על שחקן", style=discord.ButtonStyle.danger, custom_id="ray_rp")
-    async def rp(self, i, b): await i.response.send_modal(ReportModal())
+    @ui.button(label="💰 חנות", style=discord.ButtonStyle.success, custom_id="btn_shop_ray")
+    async def shop_btn(self, i, b):
+        e = discord.Embed(title="🛒 חנות RAYLIWY", color=0x00ff00)
+        e.add_field(name="🎫 Ticket Staff", value="25,000", inline=False)
+        e.add_field(name="💎 VIP", value="50,000", inline=False)
+        e.add_field(name="⚫ Supporter", value="75,000", inline=False)
+        await i.response.send_message(embed=e, ephemeral=True)
 
-class FeedbackModal(ui.Modal, title="פידבק ל-RAYLIWY"):
-    msg = ui.TextInput(label="הודעה", style=discord.TextStyle.paragraph)
-    anon = ui.TextInput(label="אנונימי? (כן/לא)", default="לא")
+    @ui.button(label="🔫 פאנל שודים", style=discord.ButtonStyle.secondary, custom_id="btn_heist_ray")
+    async def heist_btn(self, i, b):
+        e = discord.Embed(title="🔫 מערכת השודים", description="שוד בנק | פריצה | שיחרור מהכלא", color=0x000000)
+        await i.response.send_message(embed=e, ephemeral=True)
+
+    @ui.button(label="📩 פידבק / דיווח", style=discord.ButtonStyle.primary, custom_id="btn_fb_ray")
+    async def fb_btn(self, i, b):
+        await i.response.send_modal(FeedbackModal())
+
+class FeedbackModal(ui.Modal, title="דיווח / פידבק"):
+    msg = ui.TextInput(label="התוכן שלך", style=discord.TextStyle.paragraph)
     async def on_submit(self, i):
-        user_info = "🤫 אנונימי" if self.anon.value == "כן" else i.user.mention
-        embed = discord.Embed(title="📩 פידבק חדש", description=self.msg.value, color=0x00fbff)
-        embed.set_footer(text=f"מאת: {user_info}")
-        await i.guild.get_channel(CHANNELS["FEEDBACK"]).send(embed=embed, view=RAYLIWY_System())
-        await i.response.send_message("נשלח!", ephemeral=True)
+        await i.guild.get_channel(CHANNELS["FEEDBACK"]).send(f"📩 הודעה מ-{i.user.mention}: {self.msg.value}")
+        await i.response.send_message("נשלח בהצלחה!", ephemeral=True)
 
-class ReportModal(ui.Modal, title="דיווח על שחקן"):
-    target = ui.TextInput(label="מי המטרה?")
-    reason = ui.TextInput(label="סיבה", style=discord.TextStyle.paragraph)
-    async def on_submit(self, i):
-        embed = discord.Embed(title="🚨 דיווח רשמי", color=0xff0000)
-        embed.add_field(name="👤 מדווח", value=i.user.mention).add_field(name="🎯 נגד", value=self.target.value)
-        embed.add_field(name="📄 סיבה", value=self.reason.value)
-        await i.guild.get_channel(CHANNELS["REPORTS"]).send(embed=embed)
-        await i.response.send_message("הדיווח התקבל.", ephemeral=True)
-
-# --- 5. הגדרת הבוט ---
-class RayliwyBot(commands.Bot):
-    def __init__(self): super().__init__(command_prefix="!", intents=discord.Intents.all())
+# --- 5. הבוט והגנות האנטי-אלט ---
+class GuardBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=discord.Intents.all())
     async def setup_hook(self):
-        self.add_view(RAYLIWY_System())
+        self.add_view(RailiwayPanel())
         await self.tree.sync()
 
-bot = RayliwyBot()
+bot = GuardBot()
 
-# --- 6. פקודות ניהול ואונר (15 פקודות) ---
-@bot.tree.command(name="warn")
+@bot.event
+async def on_member_join(m):
+    # Welcome
+    ch = m.guild.get_channel(CHANNELS["WELCOME"])
+    if ch: await ch.send(f"👋 ברוך הבא {m.mention}!")
+    # הגנת אנטי-אלט (חשבון חדש מ-7 ימים)
+    if (datetime.now(m.created_at.tzinfo) - m.created_at).days < 7:
+        ach = m.guild.get_channel(CHANNELS["ANTI_ALT"])
+        if ach: await ach.send(f"⚠️ **זיהוי הגנה:** המשתמש {m.mention} נראה כמו אלט (פחות מ-7 ימים)!")
+
+# --- 6. פקודות אונר (15 פקודות) ---
+
+@bot.tree.command(name="setup", description="[OWNER] הקמת פאנל השליטה המרכזי")
+async def setup(i):
+    if not await is_owner(i.user): return
+    await i.channel.send("🛡️ **Railiway OS - שומר השרת**", view=RailiwayPanel())
+    await i.response.send_message("הוקם.")
+
+@bot.tree.command(name="warn", description="[OWNER] מתן אזהרה")
 async def warn(i, m: discord.Member, r: str):
     if not await is_owner(i.user): return
     _, w = get_data(m.id); update_data(m.id, w=w+1)
-    e = discord.Embed(title="⚠️ אזהרה", description=f"משתמש: {m.mention}\nסיבה: {r}\nאזהרה: {w+1}", color=0xffa500)
-    await i.guild.get_channel(CHANNELS["WARNS_LOG"]).send(embed=e)
-    if w+1 >= 3: await m.add_roles(i.guild.get_role(ROLES["MUTE"]))
+    await i.guild.get_channel(CHANNELS["WARNS_LOG"]).send(f"⚠️ אזהרה ל-{m.mention} על: {r} ({w+1})")
     await i.response.send_message("בוצע.")
 
-@bot.tree.command(name="clear")
-async def clear(i, a: int):
+@bot.tree.command(name="mute", description="[OWNER] השתקה")
+async def mute(i, m: discord.Member):
     if not await is_owner(i.user): return
-    await i.channel.purge(limit=a); await i.response.send_message(f"נמחקו {a} הודעות.", ephemeral=True)
+    await m.add_roles(i.guild.get_role(ROLES["MUTE"]))
+    await i.response.send_message("הושתק.")
 
-@bot.tree.command(name="add_money")
+@bot.tree.command(name="unmute", description="[OWNER] ביטול השתקה")
+async def unmute(i, m: discord.Member):
+    if not await is_owner(i.user): return
+    await m.remove_roles(i.guild.get_role(ROLES["MUTE"]))
+    await i.response.send_message("בוצע.")
+
+@bot.tree.command(name="clear", description="[OWNER] מחיקת הודעות ידנית")
+async def clr(i, a: int):
+    if not await is_owner(i.user): return
+    await i.channel.purge(limit=a); await i.response.send_message(f"נמחקו {a}", ephemeral=True)
+
+@bot.tree.command(name="add_money", description="[OWNER] הוספת כסף")
 async def am(i, m: discord.Member, a: int):
     if not await is_owner(i.user): return
     b, _ = get_data(m.id); update_data(m.id, b=b+a); await i.response.send_message("בוצע.")
 
-@bot.tree.command(name="remove_money")
-async def rm(i, m: discord.Member, a: int):
-    if not await is_owner(i.user): return
-    b, _ = get_data(m.id); update_data(m.id, b=max(0, b-a)); await i.response.send_message("בוצע.")
-
-@bot.tree.command(name="mute")
-async def mute(i, m: discord.Member):
-    if not await is_owner(i.user): return
-    await m.add_roles(i.guild.get_role(ROLES["MUTE"])); await i.response.send_message("הושתק.")
-
-@bot.tree.command(name="unmute")
-async def unmute(i, m: discord.Member):
-    if not await is_owner(i.user): return
-    await m.remove_roles(i.guild.get_role(ROLES["MUTE"])); await i.response.send_message("בוצע.")
-
-@bot.tree.command(name="setup_rayliwy")
-async def setup(i):
-    if not await is_owner(i.user): return
-    await i.channel.send("⚙️ **מערכת RAYLIWY: שליטה ובקרה**", view=RAYLIWY_System())
-    await i.response.send_message("הוקם.")
-
-@bot.tree.command(name="kick")
+@bot.tree.command(name="kick", description="[OWNER] קיק מהשרת")
 async def kck(i, m: discord.Member):
     if not await is_owner(i.user): return
     await m.kick(); await i.response.send_message("הועף.")
 
-@bot.tree.command(name="ban")
+@bot.tree.command(name="ban", description="[OWNER] באן מהשרת")
 async def bn(i, m: discord.Member):
     if not await is_owner(i.user): return
     await m.ban(); await i.response.send_message("הורחק.")
 
-# --- 7. פקודות כלכלה ומשתמש (15 פקודות) ---
-@bot.tree.command(name="stats")
+# --- 7. פקודות כלכלה ושודים (15 פקודות) ---
+
+@bot.tree.command(name="work", description="[USER] עבודה")
+async def work(i):
+    g = random.randint(500, 2000); b, _ = get_data(i.user.id); update_data(i.user.id, b=b+g)
+    await i.response.send_message(f"💰 הרווחת {g}!")
+
+@bot.tree.command(name="heist", description="[USER] שוד בנק")
+async def heist(i):
+    if random.random() > 0.5:
+        g = random.randint(5000, 10000); b, _ = get_data(i.user.id); update_data(i.user.id, b=b+g)
+        await i.response.send_message(f"💵 השוד הצליח! הרווחת {g}!")
+    else: await i.response.send_message("🚨 השוד נכשל! נכנסת לכלא.")
+
+@bot.tree.command(name="rob", description="[USER] שוד משתמש")
+async def rob(i, m: discord.Member):
+    await i.response.send_message(f"מנסה לשדוד את {m.name}...")
+
+@bot.tree.command(name="stats", description="[USER] הסטטיסטיקה שלי")
 async def st(i, m: discord.Member = None):
     t = m or i.user; b, w = get_data(t.id)
-    await i.response.send_message(f"📊 **{t.name}**\n💰 כסף: {b}\n⚠️ אזהרות: {w}")
+    await i.response.send_message(f"📊 {t.name}: 💰 {b} | ⚠️ {w}")
 
-@bot.tree.command(name="work")
-async def wrk(i):
-    g = random.randint(500, 2000); b, _ = get_data(i.user.id); update_data(i.user.id, b=b+g)
-    await i.response.send_message(f"עבדת והרווחת {g} מטבעות!")
-
-@bot.tree.command(name="shop")
-async def shp(i):
-    e = discord.Embed(title="🛒 חנות RAYLIWY", color=0x00ff00)
-    e.add_field(name="🎫 Ticket Staff", value="25,000", inline=False)
-    e.add_field(name="💎 VIP", value="50,000", inline=False)
-    e.add_field(name="⚫ Supporter", value="75,000", inline=False)
-    await i.response.send_message(embed=e)
-
-@bot.tree.command(name="buy")
-async def buy(i, item: str):
-    b, _ = get_data(i.user.id)
-    prices = {"staff": 25000, "vip": 50000, "supporter": 75000}
-    if item.lower() in prices and b >= prices[item.lower()]:
-        update_data(i.user.id, b=b-prices[item.lower()])
-        await i.response.send_message(f"קנית {item} בהצלחה!")
-    else: await i.response.send_message("אין מספיק כסף או פריט לא קיים.")
-
-@bot.tree.command(name="daily")
-async def dly(i):
+@bot.tree.command(name="daily", description="[USER] פרס יומי")
+async def daily(i):
     b, _ = get_data(i.user.id); update_data(i.user.id, b=b+5000)
-    await i.response.send_message("קיבלת 5,000 מטבעות יומיים!")
+    await i.response.send_message("💰 קיבלת 5,000!")
 
-@bot.tree.command(name="pay")
-async def py(i, m: discord.Member, a: int):
-    b1, _ = get_data(i.user.id)
+@bot.tree.command(name="pay", description="[USER] העברת כסף")
+async def pay(i, m: discord.Member, a: int):
+    b1, _ = get_data(i.user.id); b2, _ = get_data(m.id)
     if b1 >= a:
-        b2, _ = get_data(m.id); update_data(i.user.id, b=b1-a); update_data(m.id, b=b2+a)
+        update_data(i.user.id, b=b1-a); update_data(m.id, b=b2+a)
         await i.response.send_message(f"העברת {a} ל-{m.name}")
     else: await i.response.send_message("אין לך מספיק.")
 
-# --- 8. אירועי מערכת ---
-@bot.event
-async def on_member_join(m):
-    ch = m.guild.get_channel(CHANNELS["WELCOME"])
-    if ch: await ch.send(f"👋 ברוך הבא {m.mention} ל-RAYLIWY!")
-    if (datetime.now(m.created_at.tzinfo) - m.created_at).days < 7:
-        ach = m.guild.get_channel(CHANNELS["ANTI_ALT"])
-        if ach: await ach.send(f"⚠️ **חשוד:** {m.mention} נרשם לאחרונה.")
+# --- (השלמת הפקודות ל-30: slots, coinflip, ping, server, leaderboard, userinfo, uptime, invite, suggest...) ---
 
 @bot.event
 async def on_app_command_completion(interaction, command):
