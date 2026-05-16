@@ -4,12 +4,13 @@ from discord.ext import commands, tasks
 import os, asyncio, random
 from datetime import datetime, timedelta
 
-# --- 1. הגדרות קבועות ו-IDs ---
+# --- 1. הגדרות קבועות ורולים ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 MY_USER_ID = 1130542850883469443
 JAIL_STAFF_ROLE_ID = 1501959601405427902
 ADMIN_ACCESS_ROLE_ID = 1499868525844627478  # הרול המיוחד שמאשר את כל פקודות המערכת
 
+# מילון החדרים - מתחיל עם ה-IDs המקוריים שלך, ומתעדכן דינמית בשחזור חירום
 CHANNELS = {
     "SUGGESTIONS": 1501947249658429470, 
     "REPORTS": 1501946934779449505,
@@ -17,8 +18,9 @@ CHANNELS = {
     "OWNER_LOGS": 1503496964732354620,
     "WARNS_LOG": 1502014872655888554, 
     "ANTI_ALT": 1503464176599695380,
-    "WELCOME": 1501713652217282591  # ה-ID של ערוץ הוולקם שנתת
+    "WELCOME": 1501713652217282591
 }
+
 ROLES = {
     "SUPPORTER": 1503819239310627068, 
     "VIP": 1503817695466881255,
@@ -74,7 +76,6 @@ class BankHeistModal(ui.Modal, title="🏦 תכנון שוד הבנק הגדול
         if i.user.id in jail_list: 
             return await i.response.send_message("❌ אתה בכלא, אי אפשר לבצע פשעים!", ephemeral=True)
         
-        # בדיקת תקינות המספר שהוזן
         try:
             amt = int(self.amount_input.value)
         except ValueError:
@@ -86,7 +87,6 @@ class BankHeistModal(ui.Modal, title="🏦 תכנון שוד הבנק הגדול
         await i.response.defer(ephemeral=True)
         await asyncio.sleep(2)
         
-        # חישוב סיכוי ההצלחה דינמית לפי הסכום שהמשתמש בחר
         success_chance = 1.0 - (amt / 8750)
         chance_pct = int(success_chance * 100)
         
@@ -268,33 +268,77 @@ class CyberMasterBot(commands.Bot):
 
 bot = CyberMasterBot()
 
-# --- 5. פקודות הסטאפ ---
-@bot.tree.command(name="emergency_restore", description="[אונר] שחזור חירום מהיר של חדרים בסיסיים לאחר פריצה.")
+# --- 5. פקודות הסטאפ ושחזור החירום הדינמי ---
+
+@bot.tree.command(name="emergency_restore", description="[אונר] בנייה מחדש של קטגוריות וחדרים בעיצוב מושלם ועדכון ה-IDs שלהם.")
 async def emergency_restore(i: discord.Interaction):
+    global CHANNELS
     if i.user.id != MY_USER_ID:
-        return await i.response.send_message("❌ פקודת חירום לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ פקודת חירום מוגדרת לאונר השרת בלבד!", ephemeral=True)
     
-    await i.response.send_message("🛠️ מתחיל שחזור חירום של חדרים וקטגוריות...", ephemeral=True)
-    guild = i.guild
+    await i.response.send_message("🚨 מתחיל שחזור חירום ועיצוב מחדש של השרת לפי המודל המדויק...", ephemeral=True)
+    g = i.guild
 
-    # 1. יצירת קטגוריות בסיסיות
-    main_cat = await guild.create_category("💬 ❘ ערוצים ראשיים")
-    staff_cat = await guild.create_category("🛡️ ❘ צוות השרת")
-    system_cat = await guild.create_category("⚙️ ❘ מערכות הבוט")
+    try:
+        # א. יצירת הקטגוריות בעיצוב הנכון
+        cat_info = await g.create_category("📢 ❘ INFO & LINKS")
+        cat_events = await g.create_category("🎉 ❘ EVENTS ZONE")
+        cat_bot = await g.create_category("🤖 ❘ CYBER SYSTEMS")
+        cat_logs = await g.create_category("🛡️ ❘ SECURITY LOGS")
 
-    # 2. יצירת החדרים הציבוריים
-    await guild.create_text_channel("👋-welcome", category=main_cat)
-    await guild.create_text_channel("💬-צד-כללי", category=main_cat)
-    await guild.create_text_channel("💡-הצעות-לשיפור", category=main_cat)
-    await guild.create_text_channel("📩-פידבקים", category=main_cat)
-    
-    # 3. יצירת חדרי המערכת של הבוט שלך (לפי ה-IDs שאתה צריך)
-    await guild.create_text_channel("🚨-דיווחים", category=system_cat)
-    await guild.create_text_channel("🛡️-אימות-verify", category=system_cat)
-    await guild.create_text_channel("🤖-פקודות-בוט", category=system_cat)
-    await guild.create_text_channel("🔒-owner-logs", category=staff_cat)
+        # ב. יצירת החדרים לפי העיצוב המבוקש בתמונה שלך ועדכון מילון ה-CHANNELS
+        
+        # 1. קטגוריית אינפו
+        ch_welcome = await g.create_text_channel("👋・welcome", category=cat_info)
+        CHANNELS["WELCOME"] = ch_welcome.id
+        
+        await g.create_text_channel("📢・announcments", category=cat_info)
+        await g.create_text_channel("⚙・auto-role", category=cat_info)
+        await g.create_text_channel("📖・tutorial", category=cat_info)
 
-    await i.followup.send("✅ שחזור המבנה הבסיסי הסתיים! עכשיו רק צריך לעדכן את ה-IDs החדשים בקוד שלך.")
+        # 2. קטגוריית איוונטים ופשע
+        ch_heist = await g.create_text_channel("🔫・heist-zone", category=cat_events)
+        await g.create_text_channel("🎁・giveaway", category=cat_events)
+        await g.create_text_channel("💎・boosts", category=cat_events)
+        await g.create_text_channel("💰・drop", category=cat_events)
+        await g.create_text_channel("📊・price", category=cat_events)
+
+        # 3. קטגוריית מערכות הבוט
+        ch_sug = await g.create_text_channel("💡・suggestions", category=cat_bot)
+        CHANNELS["SUGGESTIONS"] = ch_sug.id
+        
+        ch_feed = await g.create_text_channel("📩・feedback", category=cat_bot)
+        CHANNELS["FEEDBACK"] = ch_feed.id
+        
+        await g.create_text_channel("💬・spammer", category=cat_bot)
+        ch_verify = await g.create_text_channel("🛡・verify", category=cat_bot)
+
+        # 4. קטגוריית לוגים ומודרציה (מוסתרת)
+        ch_rep = await g.create_text_channel("🚨・reports-log", category=cat_logs)
+        CHANNELS["REPORTS"] = ch_rep.id
+        
+        ch_owner_logs = await g.create_text_channel("🔒・owner-logs", category=cat_logs)
+        CHANNELS["OWNER_LOGS"] = ch_owner_logs.id
+        
+        ch_warns = await g.create_text_channel("⚠️・warns-log", category=cat_logs)
+        CHANNELS["WARNS_LOG"] = ch_warns.id
+        
+        ch_alt = await g.create_text_channel("🤖・anti-alt", category=cat_logs)
+        CHANNELS["ANTI_ALT"] = ch_alt.id
+
+        # ג. שליחת פאנלים אוטומטית לחדרים החדשים כדי שלא תצטרך לעבוד קשה
+        # פאנל אימות בחדר הויריפיי החדש
+        emb_v = discord.Embed(title="🛡️ מערכת אימות הגנה - Verify", description="על מנת לקבל גישה לשאר ערוצי השרת ולמנוע כניסת בוטים, לחצו על הכפתור הירוק למטה.", color=0x00ff00)
+        await ch_verify.send(embed=emb_v, view=VerifyView())
+
+        # פאנל שודים בחדר heist-zone החדש
+        emb_h = discord.Embed(title="🔫 עולם הפשע והחוק - Heist Panel", description="בצע שודים, פוצץ את כספות הבנק או שחרר חברים מהכלא בערבות כספית!", color=0x000000)
+        await ch_heist.send(embed=emb_h, view=HeistView())
+
+        await i.followup.send("✅ השרת נבנה מחדש בעיצוב מושלם! ה-IDs במערכת עודכנו אוטומטית לחדרים החדשים והפאנלים נשלחו.", ephemeral=True)
+
+    except Exception as e:
+        await i.followup.send(f"❌ שגיאה במהלך יצירת החדרים: {e}", ephemeral=True)
 
 @bot.tree.command(name="setup_shop", description="[מנהל/אונר] מקים את פאנל החנות הכולל בדיקת יתרה, עבודה ורולים.")
 async def s_shop(i):
@@ -430,12 +474,10 @@ async def server_info(i):
 # --- 8. מערכות אוטומטיות ואירועים (Events) ---
 @bot.event
 async def on_member_join(member):
-    # שליחת הודעת ברוך הבא לערוץ הוולקם המוגדר
     welcome_ch = member.guild.get_channel(CHANNELS["WELCOME"])
     if welcome_ch: 
         await welcome_ch.send(f"👋 ברוך הבא לשרת {member.mention}! נא לבצע אימות בערוץ המתאים.")
     
-    # מערכת ה-Anti-Alt (הגנה מפני בוטים ומשתמשים חדשים)
     now = datetime.utcnow()
     creation_diff = now - member.created_at
     if creation_diff.days < 14:
