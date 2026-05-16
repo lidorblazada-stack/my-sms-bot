@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 TOKEN = os.getenv('DISCORD_TOKEN')
 MY_USER_ID = 1130542850883469443
 JAIL_STAFF_ROLE_ID = 1501959601405427902
+ADMIN_ACCESS_ROLE_ID = 1499868525844627478  # הרול החדש שמאשר את כל פקודות המערכת
 
 CHANNELS = {
     "SUGGESTIONS": 1501947249658429470, "REPORTS": 1501946934779449505,
@@ -31,12 +32,27 @@ feedback_cooldown = {}
 
 leaderboard_config = {"channel_id": None, "message_id": None}
 
-# פונקציית עזר לבדיקת הרשאות מנהל/צוות כלא
+# פונקציית עזר לבדיקת הרשאות מנהל/צוות כלא או הרול המאושר החדש
 def is_owner_or_jail_staff(i: discord.Interaction):
     if i.user.id == MY_USER_ID:
         return True
+    
+    # בדיקה האם יש למשתמש את הרול המיוחד שמותר לו הכל
+    admin_role = i.guild.get_role(ADMIN_ACCESS_ROLE_ID)
+    if admin_role in i.user.roles:
+        return True
+        
     role = i.guild.get_role(JAIL_STAFF_ROLE_ID)
     if role in i.user.roles:
+        return True
+    return False
+
+# פונקציית עזר לבדיקת גישת אונר בלבד או הרול המאושר החדש
+def has_owner_or_admin_permission(i: discord.Interaction):
+    if i.user.id == MY_USER_ID:
+        return True
+    admin_role = i.guild.get_role(ADMIN_ACCESS_ROLE_ID)
+    if admin_role in i.user.roles:
         return True
     return False
 
@@ -213,7 +229,7 @@ class HeistView(ui.View):
         if random.random() > 0.5:
             loot = random.randint(3000, 7000)
             user_balances[i.user.id] = user_balances.get(i.user.id, 0) + loot
-            await i.followup.send(f"✅ השוד הצליח! פוצצת את הכספת וברחת WITH ₪{loot}!", ephemeral=True)
+            await i.followup.send(f"✅ השוד הצליח! פוצצת את הכספת וברחת עם ₪{loot}!", ephemeral=True)
         else:
             jail_list[i.user.id] = datetime.now() + timedelta(hours=2)
             await i.followup.send("❌ השוד נכשל! האזעקה השקטה הופעלה ונשלחת לכלא לשעתיים.", ephemeral=True)
@@ -264,18 +280,18 @@ class CyberMasterBot(commands.Bot):
 bot = CyberMasterBot()
 
 # --- 5. פקודות הסטאפ ---
-@bot.tree.command(name="setup_shop", description="[אונר בלבד] מקים את פאנל החנות הכולל בדיקת יתרה, עבודה ורולים.")
+@bot.tree.command(name="setup_shop", description="[מנהל/אונר] מקים את פאנל החנות הכולל בדיקת יתרה, עבודה ורולים.")
 async def s_shop(i):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "setup_shop")
         return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
-    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהל את הבנק שלך, צא לעבוד ורכוש הטבות ייחודיות ורולים מיוחדים!", color=0x2b2d31)
+    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהל את הבנק שלך, צา לעבוד ורכוש הטבות ייחודיות ורולים מיוחדים!", color=0x2b2d31)
     await i.channel.send(embed=emb, view=ShopView())
     await i.response.send_message("✅ פאנל חנות משודרג הוקם בהצלחה!", ephemeral=True)
 
-@bot.tree.command(name="setup_leaderboard", description="[אונר בלבד] מקים את טבלת העשירים המתעדכנת במיקום זה כל 5 דקות.")
+@bot.tree.command(name="setup_leaderboard", description="[מנהל/אונר] מקים את טבלת העשירים המתעדכנת במיקום זה כל 5 דקות.")
 async def s_leaderboard(i):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "setup_leaderboard")
         return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
     emb = discord.Embed(title="🏆 טבלת עשירים - Cyber Economy", description="הטבלה בטעינה, תתעדכן אוטומטית בעוד מספר רגעים...", color=0xffd700, timestamp=datetime.now())
@@ -284,18 +300,18 @@ async def s_leaderboard(i):
     leaderboard_config["message_id"] = msg.id
     await i.response.send_message("✅ פאנל ליידרבורד הוקם ויועבר לעדכון אוטומטי כל 5 דקות!", ephemeral=True)
 
-@bot.tree.command(name="setup_heist", description="[אונר בלבד] מקים את פאנל השודים, עולם הפשע והערבות.")
+@bot.tree.command(name="setup_heist", description="[מנהל/אונר] מקים את פאנל השודים, עולם הפשע והערבות.")
 async def s_heist(i):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "setup_heist")
         return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
     emb = discord.Embed(title="🔫 עולם הפשע והחוק - Heist Panel", description="בצע שודים, פוצץ את כספות הבנק או שחרר חברים מהכלא בערבות כספית!", color=0x000000)
     await i.channel.send(embed=emb, view=HeistView())
     await i.response.send_message("✅ פאנל שודים הוקם בהצלחה!", ephemeral=True)
 
-@bot.tree.command(name="setup_tickets", description="[אונר בלבד] מקים פאנל מאוחד להגשת דיווחים והצעות לשיפור השרת.")
+@bot.tree.command(name="setup_tickets", description="[מנהל/אונר] מקים פאנל מאוחד להגשת דיווחים והצעות לשיפור השרת.")
 async def s_tickets(i):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "setup_tickets")
         return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
     v = ui.View(timeout=None)
@@ -309,9 +325,9 @@ async def s_tickets(i):
     await i.channel.send("📩 **מרכז פניות ודיווחים - Tickets & Suggestions**\nלחצו על הכפתור המתאים למטה כדי לפתוח טופס פנייה ישירות לצוות המנהלים.", view=v)
     await i.response.send_message("✅ פאנל דיווחים והצעות מאוחד הוקם בהצלחה!", ephemeral=True)
 
-@bot.tree.command(name="setup_feedback", description="[אונר בלבד] מקים את פאנל שליחת הפידבקים של השרת.")
+@bot.tree.command(name="setup_feedback", description="[מנהל/אונר] מקים את פאנל שליחת הפידבקים של השרת.")
 async def s_feedback(i):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "setup_feedback")
         return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
     v = ui.View(timeout=None); b = ui.Button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="f_open")
@@ -319,9 +335,9 @@ async def s_feedback(i):
     await i.channel.send("📩 **פאנל פידבקים רשמי**\nלחצו על הכפתור למטה כדי להביע את דעתכם על השרת! ניתן לשלוח כאנונימי.", view=v)
     await i.response.send_message("✅ פאנל פידבקים הוקם בהצלחה!", ephemeral=True)
 
-@bot.tree.command(name="setup_verify", description="[אונר בלבד] מקים את פאנל מערכת האימות (Verify) בכניסה לשרת.")
+@bot.tree.command(name="setup_verify", description="[מנהל/אונר] מקים את פאנל מערכת האימות (Verify) בכניסה לשרת.")
 async def s_verify(i):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "setup_verify")
         return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
     emb = discord.Embed(title="🛡️ מערכת אימות הגנה - Verify", description="על מנת לקבל גישה לשאר ערוצי השרת ולמנוע כניסת בוטים, לחצו על הכפתור הירוק למטה.", color=0x00ff00)
@@ -340,29 +356,29 @@ async def pay(i, to: discord.Member, amount: int):
     await i.response.send_message(f"💸 העברת בהצלחה סכום של **₪{amount:,}** לחשבון של {to.mention}!")
 
 # --- 7. פקודות מודרציה וניהול ---
-@bot.tree.command(name="jail_add", description="[צוות כלא / אונר] שולח משתמש לכלא באופן ידני ומיידי למשך שעתיים.")
+@bot.tree.command(name="jail_add", description="[צוות כלא / מנהל / אונר] שולח משתמש לכלא באופן ידני ומיידי למשך שעתיים.")
 async def jail_add(i, member: discord.Member):
     if not is_owner_or_jail_staff(i): 
-        await send_unauthorized_alert(i, "jail_add", "צוות כלא / אונר")
+        await send_unauthorized_alert(i, "jail_add", "צוות כלא / מנהל / אונר")
         return await i.response.send_message("❌ שגיאה: פקודה זו חסומה עבורך.", ephemeral=True)
     jail_list[member.id] = datetime.now() + timedelta(hours=2)
     await i.response.send_message(f"✅ הפקודה בוצעה בהצלחה! 🔒 המשתמש {member.mention} ננעל בתוך הכלא למשך שעתיים.")
 
-@bot.tree.command(name="jail_remove", description="[צוות כלא / אונר] משחרר משתמש מהכלא באופן ידני ומיידי.")
+@bot.tree.command(name="jail_remove", description="[צוות כלא / מנהל / אונר] משחרר משתמש מהכלא באופן ידני ומיידי.")
 async def jail_remove(i, member: discord.Member):
     if not is_owner_or_jail_staff(i): 
-        await send_unauthorized_alert(i, "jail_remove", "צוות כלא / אונר")
+        await send_unauthorized_alert(i, "jail_remove", "צוות כלא / מנהל / אונר")
         return await i.response.send_message("❌ שגיאה: פקודה זו חסומה עבורך.", ephemeral=True)
     if member.id in jail_list:
         del jail_list[member.id]
         await i.response.send_message(f"✅ הפקודה בוצעה בהצלחה! 🔓 המשתמש {member.mention} שוחרר מהכלא על ידי צוות המערכת.")
     else: await i.response.send_message("❌ הפקודה נכשלה: המשתמש אינו נמצא ברשימת האסורים בכלא.", ephemeral=True)
 
-@bot.tree.command(name="warn", description="[אונר בלבד] נותן אזהרה רשמית למשתמש. באזהרה השלישית הוא מקבל מיוט.")
+@bot.tree.command(name="warn", description="[מנהל / אונר] נותן אזהרה רשמית למשתמש. באזהרה השלישית הוא מקבל מיוט.")
 async def warn(i, member: discord.Member, reason: str):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "warn")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     user_warns[member.id] = user_warns.get(member.id, 0) + 1
     count = user_warns[member.id]
     log = i.guild.get_channel(CHANNELS["WARNS_LOG"])
@@ -373,86 +389,86 @@ async def warn(i, member: discord.Member, reason: str):
         await log.send(f"🚫 המשתמש {member.mention} הגיע ל-3 אזהרות והושתק (Mute) אוטומטית על ידי המערכת.")
     await i.response.send_message(f"✅ האזהרה נרשמה בהצלחה למשתמש (אזהרה מספר {count}/3).", ephemeral=True)
 
-@bot.tree.command(name="unwarn", description="[אונר בלבד] מוריד אזהרה אחת למשתמש שחטא.")
+@bot.tree.command(name="unwarn", description="[מנהל / אונר] מוריד אזהרה אחת למשתמש שחטא.")
 async def unwarn(i, member: discord.Member):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "unwarn")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     current = user_warns.get(member.id, 0)
     if current <= 0: return await i.response.send_message("❌ למשתמש זה אין אף אזהרה פעילה בשרת.", ephemeral=True)
     user_warns[member.id] -= 1
     await i.response.send_message(f"✅ הורדה אזהרה בהצלחה. מצבו הנוכחי: `{user_warns[member.id]}/3` אזהרות.", ephemeral=True)
 
-@bot.tree.command(name="mute", description="[אונר בלבד] מקצה באופן ידני רול השתקה (Mute) למשתמש.")
+@bot.tree.command(name="mute", description="[מנהל / אונר] מקצה באופן ידני רול השתקה (Mute) למשתמש.")
 async def mute(i, member: discord.Member, reason: str):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "mute")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     await member.add_roles(i.guild.get_role(ROLES["MUTE"]))
     await i.response.send_message(f"🚫 המשתמש {member.mention} הושתק בהצלחה מהצ'אטים. סיבה: `{reason}`")
 
-@bot.tree.command(name="unmute", description="[אונר בלבד] מסיר את רול ההשתקה (Mute) ומשחרר את המשתמש לצ'אט.")
+@bot.tree.command(name="unmute", description="[מנהל / אונר] מסיר את רול ההשתקה (Mute) ומשחרר את המשתמש לצ'אט.")
 async def unmute(i, member: discord.Member):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "unmute")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     await member.remove_roles(i.guild.get_role(ROLES["MUTE"]))
     await i.response.send_message(f"🔊 המשתמש {member.mention} שוחרר מההשתקה ויכול לדבר.")
 
-@bot.tree.command(name="kick", description="[אונר בלבד] מגרש ומעיף משתמש מהשרת לצמיתות.")
+@bot.tree.command(name="kick", description="[מנהל / אונר] מגרש ומעיף משתמש מהשרת לצמיתות.")
 async def kick(i, member: discord.Member, reason: str):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "kick")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     await member.kick(reason=reason)
     await i.response.send_message(f"👞 המשתמש `{member.name}` הועף מהשרת בהצלחה. סיבה: `{reason}`")
 
-@bot.tree.command(name="ban", description="[אונר בלבד] חוסם משתמש מהשרת באופן מוחלט (Ban) שלא יוכל לחזור.")
+@bot.tree.command(name="ban", description="[מנהל / אונר] חוסם משתמש מהשרת באופן מוחלט (Ban) שלא יוכל לחזור.")
 async def ban(i, member: discord.Member, reason: str):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "ban")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     await member.ban(reason=reason)
     await i.response.send_message(f"🚫 המשתמש `{member.name}` נחסם מהשרת בהצלחה ובאופן מוחלט. סיבה: `{reason}`")
 
-@bot.tree.command(name="clear", description="[אונר בלבד] מוחק כמות מסוימת של הודעות מהערוץ הנוכחי כדי לנקות ספאם.")
+@bot.tree.command(name="clear", description="[מנהל / אונר] מוחק כמות מסוימת של הודעות מהערוץ הנוכחי כדי לנקות ספאם.")
 async def clear(i, amount: int):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "clear")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     if amount <= 0: return await i.response.send_message("❌ נא להזין מספר הודעות הגבוה מ-0.", ephemeral=True)
     await i.channel.purge(limit=amount)
     await i.response.send_message(f"🗑️ הערוץ נוקה בהצלחה! נמחקו `{amount}` הודעות אחרונות.", ephemeral=True)
 
-@bot.tree.command(name="slowmode", description="[אונר בלבד] קובע דיליי ואיטיות (Slowmode) בשניות בערוץ הנוכחי.")
+@bot.tree.command(name="slowmode", description="[מנהל / אונר] קובע דיליי ואיטיות (Slowmode) בשניות בערוץ הנוכחי.")
 async def slowmode(i, seconds: int):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "slowmode")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     await i.channel.edit(slowmode_delay=seconds)
-    await i.response.send_message(f"⏱️ הוגדר מצב איטי לערוץ זה בהצלחה. דיליי: `{seconds}` שניות בין הודעה להודעה.")
+    await i.response.send_message(f"⏱️ הוגגר מצב איטי לערוץ זה בהצלחה. דיליי: `{seconds}` שניות בין הודעה להודעה.")
 
-@bot.tree.command(name="add_money", description="[אונר בלבד] מוסיף שקלים ומטבעות לחשבונו של משתמש כלשהו בשרת.")
+@bot.tree.command(name="add_money", description="[מנהל / אונר] מוסיף שקלים ומטבעות לחשבונו של משתמש כלשהו בשרת.")
 async def add_money(i, member: discord.Member, amount: int):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "add_money")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     user_balances[member.id] = user_balances.get(member.id, 0) + amount
     await i.response.send_message(f"💰 הדפסת בהצלחה **₪{amount:,}** והפקדת אותם לחשבון של {member.mention}!", ephemeral=True)
 
-@bot.tree.command(name="remove_money", description="[אונר בלבד] מוריד ומאפס שקלים מחשבונו של משתמש כלשהו בשרת.")
+@bot.tree.command(name="remove_money", description="[מנהל / אונר] מוריד ומאפס שקלים מחשבונו של משתמש כלשהו בשרת.")
 async def remove_money(i, member: discord.Member, amount: int):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "remove_money")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     user_balances[member.id] = max(0, user_balances.get(member.id, 0) - amount)
     await i.response.send_message(f"📉 קנס רשמי: הורדת בהצלחה **₪{amount:,}** מהחשבון של {member.mention}.", ephemeral=True)
 
-@bot.tree.command(name="user_info", description="[אונר בלבד] מציג מידע ונתונים מפורטים אודות משתמש בשרת.")
+@bot.tree.command(name="user_info", description="[מנהל / אונר] מציג מידע ונתונים מפורטים אודות משתמש בשרת.")
 async def user_info(i, member: discord.Member):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "user_info")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     emb = discord.Embed(title=f"👤 מידע על: {member.name}", color=0x5865f2)
     emb.add_field(name="מזהה (ID):", value=member.id, inline=True)
     emb.add_field(name="יתרת בנק:", value=f"₪{user_balances.get(member.id, 0):,}", inline=True)
@@ -461,11 +477,11 @@ async def user_info(i, member: discord.Member):
     emb.add_field(name="הצטרף לשרת:", value=member.joined_at.strftime("%d/%m/%Y"), inline=False)
     await i.response.send_message(embed=emb)
 
-@bot.tree.command(name="server_info", description="[אונר בלבד] מציג נתונים טכניים וסטטיסטיקות אודות שרת הדיסקורד.")
+@bot.tree.command(name="server_info", description="[מנהל / אונר] מציג נתונים טכניים וסטטיסטיקות אודות שרת הדיסקורד.")
 async def server_info(i):
-    if i.user.id != MY_USER_ID: 
+    if not has_owner_or_admin_permission(i): 
         await send_unauthorized_alert(i, "server_info")
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת לאונר בלבד!", ephemeral=True)
+        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
     g = i.guild
     emb = discord.Embed(title=f"📊 סטטיסטיקת השרת: {g.name}", color=0x5865f2)
     emb.add_field(name="סך הכל חברים:", value=g.member_count, inline=True)
