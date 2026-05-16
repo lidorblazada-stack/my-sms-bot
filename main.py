@@ -199,6 +199,10 @@ class HeistView(ui.View):
         view = ui.View(); select = ui.UserSelect(placeholder="בחר את השחקן שברצונך לשדוד...")
         
         async def callback(inter):
+            # מנטרל את התפריט מיד כדי למנוע שימוש כפול וניצול החלפת משתמשים
+            select.disabled = True
+            await inter.message.edit(view=view)
+            
             target = select.values[0]
             if target.id == inter.user.id: return await inter.response.send_message("❌ אתה לא יכול לשדוד את עצמך, טמבל.", ephemeral=True)
             if target.id in jail_list: return await inter.response.send_message("❌ הקורבן כבר נמצא בכלא!", ephemeral=True)
@@ -238,13 +242,16 @@ class HeistView(ui.View):
     async def bail_friend(self, i, b):
         if user_balances.get(i.user.id, 0) < 5000: return await i.response.send_message("❌ אין לך ₪5,000 בשביל לשלם ערבות!", ephemeral=True)
         view = ui.View(); select = ui.UserSelect(placeholder="בחר את החבר שתרצה לשחרר מהכלא...")
-        async def callback(inter):
+        async def callback(select_inter):
+            select.disabled = True
+            await select_inter.message.edit(view=view)
+            
             friend = select.values[0]
             if friend.id in jail_list:
                 del jail_list[friend.id]
                 user_balances[i.user.id] -= 5000
-                await inter.response.send_message(f"🔓 שילמת ₪5,000 ערבות! המשתמש {friend.mention} שוחרר מהכלא ברגע זה.")
-            else: await inter.response.send_message("❌ השחקן הזה לא נמצא בכלא אחי.", ephemeral=True)
+                await select_inter.response.send_message(f"🔓 שילמת ₪5,000 ערבות! המשתמש {friend.mention} שוחרר מהכלא ברגע זה.")
+            else: await select_inter.response.send_message("❌ השחקן הזה לא נמצא בכלא אחי.", ephemeral=True)
         select.callback = callback; view.add_item(select)
         await i.response.send_message("בחר חבר לשחרור:", view=view, ephemeral=True)
 
