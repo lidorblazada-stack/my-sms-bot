@@ -4,13 +4,16 @@ from discord.ext import commands, tasks
 import os, asyncio, random
 from datetime import datetime, timedelta
 
-# --- 1. הגדרות קבועות ורולים ---
-TOKEN = os.getenv('DISCORD_TOKEN')
+# ==========================================
+# --- 1. הגדרות קבועות, רולים וטוקן ---
+# ==========================================
+TOKEN = os.getenv('DISCORD_TOKEN') # טוקן אחד ויחיד של הבוט שלך
+
 MY_USER_ID = 1130542850883469443
 JAIL_STAFF_ROLE_ID = 1501959601405427902
-ADMIN_ACCESS_ROLE_ID = 1499868525844627478  # הרול המיוחד שמאשר את כל פקודות המערכת
+ADMIN_ACCESS_ROLE_ID = 1499868525844627478
 
-# מילון החדרים - מתחיל עם ה-IDs המקוריים שלך, ומתעדכן דינמית בשחזור חירום
+# מילון החדרים הדינמי - מתעדכן אוטומטית בכל שחזור חירום
 CHANNELS = {
     "SUGGESTIONS": 1501947249658429470, 
     "REPORTS": 1501946934779449505,
@@ -29,7 +32,7 @@ ROLES = {
     "VERIFIED": 1501316672345211041
 }
 
-# דאטה-בייס פנימי
+# דאטה-בייס פנימי בזיכרון
 user_balances = {}
 user_warns = {}
 jail_list = {}        
@@ -39,7 +42,7 @@ feedback_cooldown = {}
 
 leaderboard_config = {"channel_id": None, "message_id": None}
 
-# פונקציות בדיקת הרשאות
+# --- פונקציות בדיקת הרשאות אבטחה ---
 def is_owner_or_jail_staff(i: discord.Interaction):
     if i.user.id == MY_USER_ID: return True
     admin_role = i.guild.get_role(ADMIN_ACCESS_ROLE_ID)
@@ -68,19 +71,20 @@ async def send_unauthorized_alert(i: discord.Interaction, cmd_name: str, require
         await i.user.send(embed=dm_emb)
     except: pass
 
+
+# ==========================================
 # --- 2. חלונות קופצים (Modals) ---
+# ==========================================
 class BankHeistModal(ui.Modal, title="🏦 תכנון שוד הבנק הגדול"):
     amount_input = ui.TextInput(label="כמה כסף ברצונך לשדוד? (1 - 7,000)", placeholder="למשל: 5000", max_length=4)
     
     async def on_submit(self, i):
         if i.user.id in jail_list: 
             return await i.response.send_message("❌ אתה בכלא, אי אפשר לבצע פשעים!", ephemeral=True)
-        
         try:
             amt = int(self.amount_input.value)
         except ValueError:
             return await i.response.send_message("❌ נא להזין מספר שלם ותקין בלבד!", ephemeral=True)
-            
         if amt < 1 or amt > 7000:
             return await i.response.send_message("❌ סכום השוד חייב להיות בין 1 ל-7,000 שקלים בלבד!", ephemeral=True)
             
@@ -92,7 +96,7 @@ class BankHeistModal(ui.Modal, title="🏦 תכנון שוד הבנק הגדול
         
         if random.random() < success_chance:
             user_balances[i.user.id] = user_balances.get(i.user.id, 0) + amt
-            await i.followup.send(f"✅ **השוד הצליח!** פוצצת את הכספת וברחת מהזירה.\n💰 **סכום שבחרת לשדוד:** ₪{amt:,}\n📉 **סיכוי ההצלחה שלך היה:** `{chance_pct}%` (והיה לך מזל!)", ephemeral=True)
+            await i.followup.send(f"✅ **השוד הצליח!** פוצצת את הכספת וברחת מהזירה.\n💰 **סכום שבחרת לשדוד:** ₪{amt:,}\n📉 **סיכוי ההצלחה שלך היה:** `{chance_pct}%`", ephemeral=True)
         else:
             jail_list[i.user.id] = datetime.now() + timedelta(hours=2)
             await i.followup.send(f"❌ **השוד נכשל!** היית חמדן מדי, האזעקה השקטה הופעלה ונשלחת לכלא לשעתיים.\n💰 **סכום שניסית לשדוד:** ₪{amt:,}\n📉 **סיכוי ההצלחה שלך היה:** `{chance_pct}%`", ephemeral=True)
@@ -130,7 +134,10 @@ class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
         feedback_cooldown[i.user.id] = now
         await i.response.send_message("✅ הפידבק נשלח בהצלחה, תודה לך!", ephemeral=True)
 
-# --- 3. פאנלים קבועים ---
+
+# ==========================================
+# --- 3. פאנלים קבועים ומערכת כפתורים ---
+# ==========================================
 class VerifyView(ui.View):
     def __init__(self): super().__init__(timeout=None)
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
@@ -198,8 +205,7 @@ class HeistView(ui.View):
         view = ui.View(); select = ui.UserSelect(placeholder="בחר את השחקן שברצונך לשדוד...")
         
         async def callback(inter):
-            select.disabled = True
-            await inter.message.edit(view=view)
+            select.disabled = True; await inter.message.edit(view=view)
             target = select.values[0]
             if target.id == inter.user.id: return await inter.response.send_message("❌ אתה לא יכול לשדוד את עצמך, טמבל.", ephemeral=True)
             if target.id in jail_list: return await inter.response.send_message("❌ הקורבן כבר נמצא בכלא!", ephemeral=True)
@@ -241,12 +247,21 @@ class HeistView(ui.View):
         select.callback = callback; view.add_item(select)
         await i.response.send_message("בחר חבר לשחרור:", view=view, ephemeral=True)
 
-# --- 4. קלאס הבוט המרכזי ---
+
+# ==========================================
+# --- 4. קלאס הבוט והלופים הפנימיים ---
+# ==========================================
 class CyberMasterBot(commands.Bot):
-    def __init__(self): super().__init__(command_prefix="!", intents=discord.Intents.all())
+    def __init__(self): 
+        super().__init__(command_prefix="!", intents=discord.Intents.all())
+        
     async def setup_hook(self):
-        self.add_view(ShopView()); self.add_view(HeistView()); self.add_view(VerifyView())
-        self.jail_loop.start(); self.lb_loop.start(); await self.tree.sync()
+        self.add_view(ShopView())
+        self.add_view(HeistView())
+        self.add_view(VerifyView())
+        self.jail_loop.start()
+        self.lb_loop.start()
+        await self.tree.sync()
 
     @tasks.loop(seconds=30)
     async def jail_loop(self):
@@ -268,7 +283,10 @@ class CyberMasterBot(commands.Bot):
 
 bot = CyberMasterBot()
 
-# --- 5. פקודות הסטאפ ושחזור החירום הדינמי ---
+
+# ==========================================
+# --- 5. פקודת שחזור חירום מובנית (בוט אחד) ---
+# ==========================================
 
 @bot.tree.command(name="emergency_restore", description="[אונר] בנייה מחדש של קטגוריות וחדרים בעיצוב מושלם ועדכון ה-IDs שלהם.")
 async def emergency_restore(i: discord.Interaction):
@@ -276,7 +294,7 @@ async def emergency_restore(i: discord.Interaction):
     if i.user.id != MY_USER_ID:
         return await i.response.send_message("❌ פקודת חירום מוגדרת לאונר השרת בלבד!", ephemeral=True)
     
-    await i.response.send_message("🚨 מתחיל שחזור חירום ועיצוב מחדש של השרת לפי המודל המדויק...", ephemeral=True)
+    await i.response.send_message("🚨 מתחיל שחזור חירום ועיצוב מחדש של השרת לפי המודל המדויק מהתמונה...", ephemeral=True)
     g = i.guild
 
     try:
@@ -313,7 +331,7 @@ async def emergency_restore(i: discord.Interaction):
         await g.create_text_channel("💬・spammer", category=cat_bot)
         ch_verify = await g.create_text_channel("🛡・verify", category=cat_bot)
 
-        # 4. קטגוריית לוגים ומודרציה (מוסתרת)
+        # 4. קטגוריית לוגים ומודרציה (מוסתרת לצוות בלבד)
         ch_rep = await g.create_text_channel("🚨・reports-log", category=cat_logs)
         CHANNELS["REPORTS"] = ch_rep.id
         
@@ -340,6 +358,8 @@ async def emergency_restore(i: discord.Interaction):
     except Exception as e:
         await i.followup.send(f"❌ שגיאה במהלך יצירת החדרים: {e}", ephemeral=True)
 
+
+# --- פקודות הסטאפ הידניות הרגילות ---
 @bot.tree.command(name="setup_shop", description="[מנהל/אונר] מקים את פאנל החנות הכולל בדיקת יתרה, עבודה ורולים.")
 async def s_shop(i):
     if not has_owner_or_admin_permission(i): [await send_unauthorized_alert(i, "setup_shop")]; return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
@@ -381,7 +401,10 @@ async def s_verify(i):
     emb = discord.Embed(title="🛡️ מערכת אימות הגנה - Verify", description="על מנת לקבל גישה לשאר ערוצי השרת ולמנוע כניסת בוטים, לחצו על הכפתור הירוק למטה.", color=0x00ff00)
     await i.channel.send(embed=emb, view=VerifyView()); await i.response.send_message("✅ פאנל אימות הוקם בהצלחה!", ephemeral=True)
 
-# --- 6. פקודת כלכלה ציבורית בצ'אט ---
+
+# ==========================================
+# --- 6. פקודות מודרציה, ניהול וכלכלה ---
+# ==========================================
 @bot.tree.command(name="pay", description="[כללי] העבר סכום כסף מחשבונך האישי ישירות לחשבון של חבר.")
 async def pay(i, to: discord.Member, amount: int):
     if amount <= 0: return await i.response.send_message("❌ נא להזין סכום תקין הגבוה מ-0 שקלים.", ephemeral=True)
@@ -390,7 +413,6 @@ async def pay(i, to: discord.Member, amount: int):
     user_balances[i.user.id] -= amount; user_balances[to.id] = user_balances.get(to.id, 0) + amount
     await i.response.send_message(f"💸 העברת בהצלחה סכום של **₪{amount:,}** לחשבון של {to.mention}!")
 
-# --- 7. פקודות מודרציה וניהול ---
 @bot.tree.command(name="jail_add", description="[צוות כלא / מנהל / אונר] שולח משתמש לכלא באופן ידני ומיידי למשך שעתיים.")
 async def jail_add(i, member: discord.Member):
     if not is_owner_or_jail_staff(i): [await send_unauthorized_alert(i, "jail_add", "צוות כלא / מנהל / אונר")]; return await i.response.send_message("❌ שגיאה: פקודה זו חסומה עבורך.", ephemeral=True)
@@ -457,7 +479,7 @@ async def add_money(i, member: discord.Member, amount: int):
 @bot.tree.command(name="remove_money", description="[מנהל / אונר] מוריד ומאפס שקלים מחשבונו של משתמש כלשהו בשרת.")
 async def remove_money(i, member: discord.Member, amount: int):
     if not has_owner_or_admin_permission(i): [await send_unauthorized_alert(i, "remove_money")]; return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
-    user_balances[member.id] = max(0, user_balances.get(member.id, 0) - amount); await i.response.send_message(f"📉 קנס רשמי: הורדת בהצלחה **₪{amount:,}** מהחשבון של {member.mention}.", ephemeral=True)
+    user_balances[member.id] = max(0, user_balances.get(member.id, 0) - amount); await i.response.send_message(f"📉 קנס רשמי: הורדת בהצלחה **₪{amount:,}** מהחשבון of {member.mention}.", ephemeral=True)
 
 @bot.tree.command(name="user_info", description="[מנהל / אונר] מציג מידע ונתונים מפורטים אודות משתמש בשרת.")
 async def user_info(i, member: discord.Member):
@@ -471,7 +493,10 @@ async def server_info(i):
     g = i.guild; emb = discord.Embed(title=f"📊 סטטיסטיקת השרת: {g.name}", color=0x5865f2); emb.add_field(name="סך הכל חברים:", value=g.member_count, inline=True); emb.add_field(name="כמות רולים:", value=len(g.roles), inline=True); emb.add_field(name="כמות ערוצים:", value=len(g.channels), inline=True); emb.set_thumbnail(url=g.icon.url if g.icon else None)
     await i.response.send_message(embed=emb)
 
-# --- 8. מערכות אוטומטיות ואירועים (Events) ---
+
+# ==========================================
+# --- 7. מערכות אוטומטיות ואירועים (Events) ---
+# ==========================================
 @bot.event
 async def on_member_join(member):
     welcome_ch = member.guild.get_channel(CHANNELS["WELCOME"])
