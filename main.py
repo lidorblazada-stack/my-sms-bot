@@ -269,6 +269,33 @@ class CyberMasterBot(commands.Bot):
 bot = CyberMasterBot()
 
 # --- 5. פקודות הסטאפ ---
+@bot.tree.command(name="emergency_restore", description="[אונר] שחזור חירום מהיר של חדרים בסיסיים לאחר פריצה.")
+async def emergency_restore(i: discord.Interaction):
+    if i.user.id != MY_USER_ID:
+        return await i.response.send_message("❌ פקודת חירום לאונר בלבד!", ephemeral=True)
+    
+    await i.response.send_message("🛠️ מתחיל שחזור חירום של חדרים וקטגוריות...", ephemeral=True)
+    guild = i.guild
+
+    # 1. יצירת קטגוריות בסיסיות
+    main_cat = await guild.create_category("💬 ❘ ערוצים ראשיים")
+    staff_cat = await guild.create_category("🛡️ ❘ צוות השרת")
+    system_cat = await guild.create_category("⚙️ ❘ מערכות הבוט")
+
+    # 2. יצירת החדרים הציבוריים
+    await guild.create_text_channel("👋-welcome", category=main_cat)
+    await guild.create_text_channel("💬-צד-כללי", category=main_cat)
+    await guild.create_text_channel("💡-הצעות-לשיפור", category=main_cat)
+    await guild.create_text_channel("📩-פידבקים", category=main_cat)
+    
+    # 3. יצירת חדרי המערכת של הבוט שלך (לפי ה-IDs שאתה צריך)
+    await guild.create_text_channel("🚨-דיווחים", category=system_cat)
+    await guild.create_text_channel("🛡️-אימות-verify", category=system_cat)
+    await guild.create_text_channel("🤖-פקודות-בוט", category=system_cat)
+    await guild.create_text_channel("🔒-owner-logs", category=staff_cat)
+
+    await i.followup.send("✅ שחזור המבנה הבסיסי הסתיים! עכשיו רק צריך לעדכן את ה-IDs החדשים בקוד שלך.")
+
 @bot.tree.command(name="setup_shop", description="[מנהל/אונר] מקים את פאנל החנות הכולל בדיקת יתרה, עבודה ורולים.")
 async def s_shop(i):
     if not has_owner_or_admin_permission(i): [await send_unauthorized_alert(i, "setup_shop")]; return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
