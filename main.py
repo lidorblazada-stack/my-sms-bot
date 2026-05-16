@@ -4,7 +4,7 @@ from discord.ext import commands, tasks
 import os, asyncio, random
 from datetime import datetime, timedelta
 
-# --- 1. הגדרות קבועות ו-IDs (המגילה של לידור) ---
+# --- 1. הגדרות קבועות ו-IDs ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 MY_USER_ID = 1130542850883469443
 
@@ -12,7 +12,7 @@ CHANNELS = {
     "SUGGESTIONS": 1501947249658429470, "REPORTS": 1501946934779449505,
     "FEEDBACK": 1503475379942461522, "OWNER_LOGS": 1503496964732354620,
     "WARNS_LOG": 1502014872655888554, "ANTI_ALT": 1503464176599695380,
-    "WELCOME": 1501713652217282591, "LEADERBOARD": 1502014872655888554
+    "WELCOME": 1501713652217282591
 }
 ROLES = {
     "SUPPORTER": 1503819239310627068, "VIP": 1503817695466881255,
@@ -20,13 +20,16 @@ ROLES = {
     "VERIFIED": 1501316672345211041
 }
 
-# דאטה-בייס פנימי (בזיכרון)
+# דאטה-בייס פנימי
 user_balances = {}
 user_warns = {}
-jail_list = {}        # {user_id: release_time}
-daily_cooldown = {}   # {user_id: last_claim_time}
-work_cooldown = {}    # {user_id: last_work_time}
-feedback_cooldown = {} # {user_id: last_fb_time}
+jail_list = {}        
+daily_cooldown = {}   
+work_cooldown = {}    
+feedback_cooldown = {} 
+
+# משתנה לשמירת המיקום של הליידרבורד
+leaderboard_config = {"channel_id": None, "message_id": None}
 
 # --- 2. חלונות קופצים (Modals) ---
 class SuggestionModal(ui.Modal, title="💡 הצעה חדשה לשיפור"):
@@ -65,7 +68,7 @@ class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
         feedback_cooldown[i.user.id] = now
         await i.response.send_message("✅ הפידבק נשלח בהצלחה, תודה לך!", ephemeral=True)
 
-# --- 3. פאנלים קבועים ואינטראקטיביים (Persistent Views) ---
+# --- 3. פאנלים קבועים ---
 class VerifyView(ui.View):
     def __init__(self): super().__init__(timeout=None)
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
@@ -75,15 +78,35 @@ class VerifyView(ui.View):
         await i.user.add_roles(role)
         await i.response.send_message("🎉 אומתת בהצלחה! ברוך הבא לשרת.", ephemeral=True)
 
+# 🏪 חנות משודרגת - כוללת בדיקת יתרה ועבודה בפנים
 class ShopView(ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @ui.button(label="קנה Supporter 🎗️", style=discord.ButtonStyle.secondary, custom_id="sh_supp", row=0)
+    
+    @ui.button(label="💰 בדיקת יתרה (Bal)", style=discord.ButtonStyle.primary, custom_id="sh_bal", row=0)
+    async def check_bal(self, i, b):
+        await i.response.send_message(f"💰 היתרה הנוכחית שלך עומדת על: **₪{user_balances.get(i.user.id, 0):,}**", ephemeral=True)
+
+    @ui.button(label="🛠️ צא לעבודה (Work)", style=discord.ButtonStyle.primary, custom_id="sh_work", row=0)
+    async def do_work(self, i, b):
+        now = datetime.now()
+        last = work_cooldown.get(i.user.id)
+        if last and now < last + timedelta(minutes=10):
+            diff = (last + timedelta(minutes=10)) - now
+            return await i.response.send_message(f"❌ המשמרת שלך נגמרה! אתה עייף, חזור בעוד {diff.seconds // 60} דקות.", ephemeral=True)
+        
+        amt = random.randint(200, 600)
+        user_balances[i.user.id] = user_balances.get(i.user.id, 0) + amt
+        work_cooldown[i.user.id] = now
+        jobs = ["מתכנת בוטים לדיסקורד 💻", "ברמן במועדון לילה 🍹", "נהג מונית במרכז העיר 🚖", "מאבטח בקניון 👮"]
+        await i.response.send_message(f"🛠️ עבדת בתור **{random.choice(jobs)}** והרווחת סכום של **₪{amt}**!", ephemeral=True)
+
+    @ui.button(label="קנה Supporter 🎗️", style=discord.ButtonStyle.secondary, custom_id="sh_supp", row=1)
     async def buy_supp(self, i, b): await self.process_purchase(i, 2000, ROLES["SUPPORTER"], "Supporter")
     
-    @ui.button(label="קנה VIP 💎", style=discord.ButtonStyle.primary, custom_id="sh_vip", row=0)
+    @ui.button(label="קנה VIP 💎", style=discord.ButtonStyle.secondary, custom_id="sh_vip", row=1)
     async def buy_vip(self, i, b): await self.process_purchase(i, 5000, ROLES["VIP"], "VIP")
     
-    @ui.button(label="🎁 פרס יומי (Daily)", style=discord.ButtonStyle.success, custom_id="sh_daily", row=1)
+    @ui.button(label="🎁 פרס יומי (Daily)", style=discord.ButtonStyle.success, custom_id="sh_daily", row=2)
     async def claim_daily(self, i, b):
         now = datetime.now()
         last = daily_cooldown.get(i.user.id)
@@ -156,7 +179,7 @@ class HeistView(ui.View):
         if random.random() > 0.5:
             loot = random.randint(3000, 7000)
             user_balances[i.user.id] = user_balances.get(i.user.id, 0) + loot
-            await i.followup.send(f"🏦 פוצצת את הכספת! השוד הצליח וברחת עם ₪{loot}!", ephemeral=True)
+            await i.followup.send(f"🏦 פוצצת את הכספת! השוד הצליח וברחת WITH ₪{loot}!", ephemeral=True)
         else:
             jail_list[i.user.id] = datetime.now() + timedelta(hours=2)
             await i.followup.send("🚨 האזעקה השקטה הופעלה! המשטרה הקיפה את המבנה ונשלחת לכלא לשעתיים.", ephemeral=True)
@@ -191,26 +214,39 @@ class CyberMasterBot(commands.Bot):
         to_release = [uid for uid, release_time in jail_list.items() if now >= release_time]
         for uid in to_release: del jail_list[uid]
 
+    # לולאת עדכון הליידרבורד - מתעדכנת במיקום שהגדרת בסטאפ
     @tasks.loop(minutes=5)
     async def lb_loop(self):
-        ch = self.get_channel(CHANNELS["LEADERBOARD"])
-        if ch:
-            emb = discord.Embed(title="🏆 טבלת עשירים - Cyber Economy", color=0xffd700, timestamp=datetime.now())
-            sorted_users = sorted(user_balances.items(), key=lambda x: x[1], reverse=True)[:10]
-            emb.description = "\n".join([f"**#{idx+1}** <@{uid}>  get ₪{bal:,}" for idx, (uid, bal) in enumerate(sorted_users)]) if sorted_users else "אין מידע עדיין."
-            async for m in ch.history(limit=5): 
-                if m.author == self.user: await m.delete()
-            await ch.send(embed=emb)
+        if leaderboard_config["channel_id"] and leaderboard_config["message_id"]:
+            ch = self.get_channel(leaderboard_config["channel_id"])
+            if ch:
+                try:
+                    msg = await ch.fetch_message(leaderboard_config["message_id"])
+                    emb = discord.Embed(title="🏆 טבלת עשירים - Cyber Economy", color=0xffd700, timestamp=datetime.now())
+                    sorted_users = sorted(user_balances.items(), key=lambda x: x[1], reverse=True)[:10]
+                    emb.description = "\n".join([f"**#{idx+1}** <@{uid}>  get ₪{bal:,}" for idx, (uid, bal) in enumerate(sorted_users)]) if sorted_users else "אין מידע עדיין."
+                    await msg.edit(embed=emb)
+                except:
+                    pass
 
 bot = CyberMasterBot()
 
-# --- 5. פקודות הסטאפ הנפרדות (6 פקודות) ---
-@bot.tree.command(name="setup_shop", description="[אונר בלבד] מקים את פאנל החנות עם הרולים והפרס היומי.")
+# --- 5. פקודות הסטאפ (7 פקודות כולל ליידרבורד) ---
+@bot.tree.command(name="setup_shop", description="[אונר בלבד] מקים את פאנל החנות הכולל בדיקת יתרה, עבודה ורולים.")
 async def s_shop(i):
     if i.user.id != MY_USER_ID: return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
-    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="רכוש הטבות ייחודיות ורולים מיוחדים בכסף המשחק של השרת!", color=0x2b2d31)
+    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהל את הבנק שלך, צא לעבוד ורכוש הטבות ייחודיות ורולים מיוחדים!", color=0x2b2d31)
     await i.channel.send(embed=emb, view=ShopView())
-    await i.response.send_message("✅ פאנל חנות הוקם בהצלחה!", ephemeral=True)
+    await i.response.send_message("✅ פאנל חנות משודרג הוקם בהצלחה!", ephemeral=True)
+
+@bot.tree.command(name="setup_leaderboard", description="[אונר בלבד] מקים את טבלת העשירים המתעדכנת במיקום זה כל 5 דקות.")
+async def s_leaderboard(i):
+    if i.user.id != MY_USER_ID: return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
+    emb = discord.Embed(title="🏆 טבלת עשירים - Cyber Economy", description="הטבלה בטעינה, תתעדכן אוטומטית בעוד מספר רגעים...", color=0xffd700, timestamp=datetime.now())
+    msg = await i.channel.send(embed=emb)
+    leaderboard_config["channel_id"] = i.channel.id
+    leaderboard_config["message_id"] = msg.id
+    await i.response.send_message("✅ פאנל ליידרבורד הוקם ויועבר לעדכון אוטומטי כל 5 דקות!", ephemeral=True)
 
 @bot.tree.command(name="setup_heist", description="[אונר בלבד] מקים את פאנל השודים, עולם הפשע והערבות.")
 async def s_heist(i):
@@ -250,26 +286,7 @@ async def s_verify(i):
     await i.channel.send(embed=emb, view=VerifyView())
     await i.response.send_message("✅ פאנל אימות הוקם בהצלחה!", ephemeral=True)
 
-# --- 6. פקודות כלכלה לכלל המשתמשים (4 פקודות) ---
-@bot.tree.command(name="bal", description="[כללי] בודק את יתרת המטבעות הנוכחית שלך או של חבר בשרת.")
-async def bal(i, user: discord.Member = None):
-    t = user or i.user
-    await i.response.send_message(f"💰 היתרה הנוכחית של {t.mention} עומדת על: **₪{user_balances.get(t.id, 0):,}**")
-
-@bot.tree.command(name="work", description="[כללי] עבוד קשה במגוון עבודות אקראיות בשרת בשביל להרוויח שקלים.")
-async def work(i):
-    now = datetime.now()
-    last = work_cooldown.get(i.user.id)
-    if last and now < last + timedelta(minutes=10):
-        diff = (last + timedelta(minutes=10)) - now
-        return await i.response.send_message(f"❌ המשמרת שלך נגמרה! אתה עייף, חזור בעוד {diff.seconds // 60} דקות.", ephemeral=True)
-    
-    amt = random.randint(200, 600)
-    user_balances[i.user.id] = user_balances.get(i.user.id, 0) + amt
-    work_cooldown[i.user.id] = now
-    jobs = ["מתכנת בוטים לדיסקורד 💻", "ברמן במועדון לילה 🍹", "נהג מונית במרכז העיר 🚖", "מאבטח בקניון 👮"]
-    await i.response.send_message(f"🛠️ עבדת בתור **{random.choice(jobs)}** והרווחת סכום של **₪{amt}**!")
-
+# --- 6. פקודת כלכלה ציבורית בצ'אט (פקודה אחת בלבד שנשארה) ---
 @bot.tree.command(name="pay", description="[כללי] העבר סכום כסף מחשבונך האישי ישירות לחשבון של חבר.")
 async def pay(i, to: discord.Member, amount: int):
     if amount <= 0: return await i.response.send_message("❌ נא להזין סכום תקין הגבוה מ-0 שקלים.", ephemeral=True)
@@ -279,13 +296,6 @@ async def pay(i, to: discord.Member, amount: int):
     user_balances[i.user.id] -= amount
     user_balances[to.id] = user_balances.get(to.id, 0) + amount
     await i.response.send_message(f"💸 העברת בהצלחה סכום של **₪{amount:,}** לחשבון של {to.mention}!")
-
-@bot.tree.command(name="leaderboard", description="[כללי] מציג את רשימת 10 האנשים העשירים ביותר בשרת כרגע.")
-async def leaderboard(i):
-    emb = discord.Embed(title="🏆 טבלת עשירים - Cyber Economy", color=0xffd700, timestamp=datetime.now())
-    sorted_users = sorted(user_balances.items(), key=lambda x: x[1], reverse=True)[:10]
-    emb.description = "\n".join([f"**#{idx+1}** <@{uid}>  get ₪{bal:,}" for idx, (uid, bal) in enumerate(sorted_users)]) if sorted_users else "אין מידע בשרת כרגע."
-    await i.response.send_message(embed=emb)
 
 # --- 7. פקודות מודרציה וניהול אונר (14 פקודות) ---
 @bot.tree.command(name="warn", description="[ניהול / אונר] נותן אזהרה רשמית למשתמש. באזהרה השלישית הוא מקבל מיוט.")
@@ -393,15 +403,11 @@ async def server_info(i):
     await i.response.send_message(embed=emb)
 
 # --- 8. מערכות אוטומטיות ואירועים (Events) ---
-
-# מערכת אנטי אלט (Anti-Alt) וברוכים הבאים
 @bot.event
 async def on_member_join(member):
-    # ברוכים הבאים
     welcome_ch = member.guild.get_channel(CHANNELS["WELCOME"])
     if welcome_ch: await welcome_ch.send(f"👋 ברוך הבא לשרת {member.mention}! נא לבצע אימות בערוץ המתאים.")
     
-    # אנטי-אלט (פחות מ-14 ימים)
     now = datetime.utcnow()
     creation_diff = now - member.created_at
     if creation_diff.days < 14:
@@ -421,7 +427,6 @@ async def on_member_join(member):
             v.add_item(b_kick); v.add_item(b_ok)
             await anti_alt_ch.send(embed=emb, view=v)
 
-# לוג אונר אוטומטי מלא
 @bot.event
 async def on_app_command_completion(i, cmd):
     log_ch = i.guild.get_channel(CHANNELS["OWNER_LOGS"])
@@ -432,5 +437,4 @@ async def on_app_command_completion(i, cmd):
         emb.add_field(name="הסבר פקודה:", value=cmd.description, inline=False)
         await log_ch.send(embed=emb)
 
-# הרצת הבוט עם הטוקן
 bot.run(TOKEN)
