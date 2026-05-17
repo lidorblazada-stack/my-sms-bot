@@ -5,25 +5,27 @@ import os
 import asyncio
 import random
 from datetime import datetime, timedelta
+import firebase_admin
+from firebase_admin import credentials, db
 
 # ==========================================
 # --- 1. הגדרות קבועות, רולים וטוקן ---
 # ==========================================
-TOKEN = os.getenv('DISCORD_TOKEN')  # טוקן הבוט שלך
+TOKEN = os.getenv('DISCORD_TOKEN')
+FIREBASE_URL = os.getenv('FIREBASE_URL')
 
 MY_USER_ID = 1130542850883469443
 JAIL_STAFF_ROLE_ID = 1501959601405427902
 ADMIN_ACCESS_ROLE_ID = 1499868525844627478
 
-# מילון החדרים הדינמי - מתעדכן אוטומטית בכל שחזור חירום
 CHANNELS = {
-    "SUGGESTIONS": 1501947249658429470, 
-    "REPORTS": 1501946934779449505,
-    "FEEDBACK": 1503475379942461522, 
-    "OWNER_LOGS": 1503496964732354620,
-    "WARNS_LOG": 1502014872655888554, 
-    "ANTI_ALT": 1503464176599695380,
-    "WELCOME": 1501713652217282591
+    "FEEDBACK": 1505632543066689686,        
+    "WELCOME": 1505634203776319539,         
+    "SUGGESTIONS": 1505636914588287006,     
+    "REPORTS": 1505636914588287006,         
+    "ANTI_ALT": 1505637562633420870,        
+    "OWNER_LOGS": 1505637562633420870,      
+    "WARNS_LOG": 1502014872655888554        
 }
 
 ROLES = {
@@ -34,35 +36,93 @@ ROLES = {
     "VERIFIED": 1501316672345211041
 }
 
-# דאטה-בייס פנימי בזיכרון הבוט
-user_balances = {}
-user_warns = {}
-jail_list = {}        
+# קולדאונדים וזיכרון זמני למערכות ההגנה
 daily_cooldown = {}   
 work_cooldown = {}    
 feedback_cooldown = {} 
 
+# זיכרון אנטי-ספאם (משתמש -> רשימת זמני הודעות)
+spam_tracker = {}
+# זיכרון אנטי-רייד (רשימת זמני כניסה של אנשים לשרת)
+join_tracker = []
+raid_mode_active = False
+
 leaderboard_config = {"channel_id": None, "message_id": None}
 
-# --- פונקציות בדיקת הרשאות אבטחה ---
+# ==========================================
+# --- 2. חיבור ל-Firebase Realtime Database ---
+# ==========================================
+try:
+    cred = credentials.Certificate(os.getenv('FIREBASE_CONFIG')) if os.getenv('FIREBASE_CONFIG') else credentials.ApplicationDefault()
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': FIREBASE_URL
+    })
+    print("✅ החיבור ל-Firebase עבר בהצלחה!")
+except Exception as e:
+    print(f"⚠️ אזהרת חיבור ל-Firebase: {e}")
+
+# פונקציות עזר לפיירבייס
+def get_user_data(user_id, key, default_value=0):
+    try:
+        ref = db.reference(f'users/{user_id}/{key}')
+        val = ref.get()
+        return val if val is not None else default_value
+    except:
+        return default_value
+
+def set_user_data(user_id, key, value):
+    try:
+        ref = db.reference(f'users/{user_id}/{key}')
+        ref.set(value)
+    except:
+        pass
+
+def get_all_balances():
+    try:
+        ref = db.reference('users')
+        users = ref.get()
+        if not users: return {}
+        return {int(uid): data.get('balance', 0) for uid, data in users.items() if 'balance' in data}
+    except:
+        return {}
+
+def get_jail_list_from_db():
+    try:
+        ref = db.reference('jail')
+        res = ref.get()
+        if not res: return {}
+        now = datetime.now()
+        return {int(uid): datetime.fromisoformat(t) for uid, t in res.items() if datetime.fromisoformat(t) > now}
+    except:
+        return {}
+
+def add_to_jail_db(user_id, release_time):
+    try:
+        ref = db.reference(f'jail/{user_id}')
+        ref.set(release_time.isoformat())
+    except:
+        pass
+
+def remove_from_jail_db(user_id):
+    try:
+        ref = db.reference(f'jail/{user_id}')
+        ref.delete()
+    except:
+        pass
+
+
+# --- הרשאות ואבטחה ---
 def is_owner_or_jail_staff(i: discord.Interaction):
-    if i.user.id == MY_USER_ID: 
-        return True
+    if i.user.id == MY_USER_ID: return True
     admin_role = i.guild.get_role(ADMIN_ACCESS_ROLE_ID)
-    if admin_role in i.user.roles: 
-        return True
+    if admin_role in i.user.roles: return True
     role = i.guild.get_role(JAIL_STAFF_ROLE_ID)
-    if role in i.user.roles: 
-        return True
-    return False
+    return role in i.user.roles
 
 def has_owner_or_admin_permission(i: discord.Interaction):
-    if i.user.id == MY_USER_ID: 
-        return True
+    if i.user.id == MY_USER_ID: return True
     admin_role = i.guild.get_role(ADMIN_ACCESS_ROLE_ID)
-    if admin_role in i.user.roles: 
-        return True
-    return False
+    return admin_role in i.user.roles
 
 async def send_unauthorized_alert(i: discord.Interaction, cmd_name: str, required_role: str = "אונר בלבד"):
     log_ch = i.guild.get_channel(CHANNELS["OWNER_LOGS"])
@@ -71,22 +131,21 @@ async def send_unauthorized_alert(i: discord.Interaction, cmd_name: str, require
         emb.add_field(name="המשתמש החשוד:", value=f"{i.user.mention} ({i.user.name})", inline=True)
         emb.add_field(name="הפקודה שנחסמה:", value=f"`/{cmd_name}`", inline=True)
         emb.add_field(name="הרשאה נדרשת:", value=f"`{required_role}`", inline=False)
-        emb.set_footer(text=f"ID: {i.user.id}")
         await log_ch.send(embed=emb)
     try:
-        dm_emb = discord.Embed(title="⚠️ אזהרת מערכת חמורה - Cyber Security", description=f"שלום {i.user.name},\nניסית להפעיל את הפקודה המוגנת `/{cmd_name}` ללא הרשאות.", color=0xff0000, timestamp=datetime.now())
+        dm_emb = discord.Embed(title="⚠️ אזהרת מערכת חמורה - Cyber Security", description=f"שלום {i.user.name},\nניסית להפעיל את הפקודה המוגנת `/{cmd_name}` ללא הרשאות.", color=0xff0000)
         await i.user.send(embed=dm_emb)
-    except: 
-        pass
+    except: pass
 
 
 # ==========================================
-# --- 2. חלונות קופצים (Modals) ---
+# --- 3. חלונות קופצים (Modals) ---
 # ==========================================
 class BankHeistModal(ui.Modal, title="🏦 תכנון שוד הבנק הגדול"):
     amount_input = ui.TextInput(label="כמה כסף ברצונך לשדוד? (1 - 7,000)", placeholder="למשל: 5000", max_length=4)
     
     async def on_submit(self, i: discord.Interaction):
+        jail_list = get_jail_list_from_db()
         if i.user.id in jail_list: 
             return await i.response.send_message("❌ אתה בכלא, אי אפשר לבצע פשעים!", ephemeral=True)
         try:
@@ -103,10 +162,12 @@ class BankHeistModal(ui.Modal, title="🏦 תכנון שוד הבנק הגדול
         chance_pct = int(success_chance * 100)
         
         if random.random() < success_chance:
-            user_balances[i.user.id] = user_balances.get(i.user.id, 0) + amt
+            current_bal = get_user_data(i.user.id, 'balance', 0)
+            set_user_data(i.user.id, 'balance', current_bal + amt)
             await i.followup.send(f"✅ **השוד הצליח!** פוצצת את הכספת וברחת מהזירה.\n💰 **סכום שבחרת לשדוד:** ₪{amt:,}\n📉 **סיכוי ההצלחה שלך היה:** `{chance_pct}%`", ephemeral=True)
         else:
-            jail_list[i.user.id] = datetime.now() + timedelta(hours=2)
+            release_time = datetime.now() + timedelta(hours=2)
+            add_to_jail_db(i.user.id, release_time)
             await i.followup.send(f"❌ **השוד נכשל!** היית חמדן מדי, האזעקה השקטה הופעלה ונשלחת לכלא לשעתיים.\n💰 **סכום שניסית לשדוד:** ₪{amt:,}\n📉 **סיכוי ההצלחה שלך היה:** `{chance_pct}%`", ephemeral=True)
 
 class SuggestionModal(ui.Modal, title="💡 הצעה חדשה לשיפור"):
@@ -128,9 +189,9 @@ class ReportModal(ui.Modal, title="🚨 דיווח על שחקן"):
         emb = discord.Embed(title="🚨 דיווח חדש התקבל", color=0xff0000, timestamp=datetime.now())
         emb.add_field(name="המדווח:", value=i.user.mention, inline=True)
         emb.add_field(name="הנידון:", value=self.player.value, inline=True)
-        emb.add_field(name="סיבה/פירוט:", value=self.reason.value, inline=False)
+        emb.add_field(name="סיבה:", value=self.reason.value, inline=False)
         await i.guild.get_channel(CHANNELS["REPORTS"]).send(embed=emb)
-        await i.response.send_message("✅ הדיווח הועבר לטיפול הצוות.", ephemeral=True)
+        await i.response.send_message("✅ הדיווח הועבר לטיפול צוות הניהול.", ephemeral=True)
 
 class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
     content = ui.TextInput(label="רשום את הפידבק שלך", style=discord.TextStyle.paragraph)
@@ -148,11 +209,10 @@ class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
 
 
 # ==========================================
-# --- 3. פאנלים קבועים ומערכת כפתורים ---
+# --- 4. פאנלים קבועים ומערכת כפתורים ---
 # ==========================================
 class VerifyView(ui.View):
-    def __init__(self): 
-        super().__init__(timeout=None)
+    def __init__(self): super().__init__(timeout=None)
         
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
     async def verify_user(self, i: discord.Interaction, b: ui.Button):
@@ -163,12 +223,12 @@ class VerifyView(ui.View):
         await i.response.send_message("🎉 אומתת בהצלחה! ברוך הבא לשרת.", ephemeral=True)
 
 class ShopView(ui.View):
-    def __init__(self): 
-        super().__init__(timeout=None)
+    def __init__(self): super().__init__(timeout=None)
         
     @ui.button(label="💰 בדיקת יתרה (Bal)", style=discord.ButtonStyle.primary, custom_id="sh_bal", row=0)
     async def check_bal(self, i: discord.Interaction, b: ui.Button): 
-        await i.response.send_message(f"💰 היתרה הנוכחית שלך עומדת על: **₪{user_balances.get(i.user.id, 0):,}**", ephemeral=True)
+        bal = get_user_data(i.user.id, 'balance', 0)
+        await i.response.send_message(f"💰 היתרה הנוכחית שלך עומדת על: **₪{bal:,}**", ephemeral=True)
 
     @ui.button(label="🛠️ צא לעבודה (Work)", style=discord.ButtonStyle.primary, custom_id="sh_work", row=0)
     async def do_work(self, i: discord.Interaction, b: ui.Button):
@@ -176,11 +236,12 @@ class ShopView(ui.View):
         last = work_cooldown.get(i.user.id)
         if last and now < last + timedelta(minutes=10):
             diff = (last + timedelta(minutes=10)) - now
-            return await i.response.send_message(f"❌ המשמרת שלך נגמרה! חזור בעוד {diff.seconds // 60} דקות.", ephemeral=True)
+            return await i.response.send_message(f"❌ חזור בעוד {diff.seconds // 60} דקות ו-{diff.seconds % 60} שניות.", ephemeral=True)
         amt = random.randint(200, 600)
-        user_balances[i.user.id] = user_balances.get(i.user.id, 0) + amt
+        current_bal = get_user_data(i.user.id, 'balance', 0)
+        set_user_data(i.user.id, 'balance', current_bal + amt)
         work_cooldown[i.user.id] = now
-        jobs = ["מתכנת בוטים לדיסקורד 💻", "ברמן במועדון לילה 🍹", "נהג מונית במרכז העיר 🚖", "מאבטח בקניון 👮"]
+        jobs = ["מתכנת בוטים 💻", "ברמן במועדון 🍹", "נהג מונית 🚖", "מאבטח קניון 👮"]
         await i.response.send_message(f"🛠️ עבדת בתור **{random.choice(jobs)}** והרווחת **₪{amt}**!", ephemeral=True)
 
     @ui.button(label="קנה Supporter 🎗️", style=discord.ButtonStyle.secondary, custom_id="sh_supp", row=1)
@@ -199,20 +260,21 @@ class ShopView(ui.View):
             diff = (last + timedelta(days=1)) - now
             hours, remainder = divmod(diff.seconds, 3600)
             minutes = remainder // 60
-            return await i.response.send_message(f"❌ כבר אספת את הפרס יומי! חזור בעוד {hours} שעות ו-{minutes} דקות.", ephemeral=True)
+            return await i.response.send_message(f"❌ חזור בעוד {hours} שעות ו-{minutes} דקות.", ephemeral=True)
         amt = random.randint(500, 1500)
-        user_balances[i.user.id] = user_balances.get(i.user.id, 0) + amt
+        current_bal = get_user_data(i.user.id, 'balance', 0)
+        set_user_data(i.user.id, 'balance', current_bal + amt)
         daily_cooldown[i.user.id] = now
         await i.response.send_message(f"💰 אספת בהצלחה ₪{amt} לחשבון הבנק שלך!", ephemeral=True)
 
     async def process_purchase(self, i: discord.Interaction, price, role_id, role_name):
-        bal = user_balances.get(i.user.id, 0)
+        bal = get_user_data(i.user.id, 'balance', 0)
         if bal < price: 
-            return await i.response.send_message(f"❌ חסר לך ₪{price - bal} בשביל לקנות את רול {role_name}!", ephemeral=True)
+            return await i.response.send_message(f"❌ חסר לך ₪{price - bal} בשביל הרול!", ephemeral=True)
         role = i.guild.get_role(role_id)
         if role in i.user.roles: 
             return await i.response.send_message("❌ כבר יש לך את הרול הזה!", ephemeral=True)
-        user_balances[i.user.id] -= price
+        set_user_data(i.user.id, 'balance', bal - price)
         await i.user.add_roles(role)
         await i.response.send_message(f"✅ הרכישה הצליחה! קיבלת את הרול {role_name}.", ephemeral=True)
 
@@ -226,19 +288,18 @@ class PoliceView(ui.View):
     async def call_police(self, i: discord.Interaction, b: ui.Button):
         self.called = True
         self.stop()
-        jail_list[self.robber.id] = datetime.now() + timedelta(hours=2)
+        release_time = datetime.now() + timedelta(hours=2)
+        add_to_jail_db(self.robber.id, release_time)
         await i.response.send_message("📞 המשטרה בדרך! השודד נתפס וננעל בכלא לשעתיים.", ephemeral=True)
-        try: 
-            await self.robber.send("🚨 נתפסת על חם! הקורבן קרא למשטרה והוכנסת לכלא לשעתיים.")
-        except: 
-            pass
+        try: await self.robber.send("🚨 נתפסת על חם! הקורבן קרא למשטרה והוכנסת לכלא.")
+        except: pass
 
 class HeistView(ui.View):
-    def __init__(self): 
-        super().__init__(timeout=None)
+    def __init__(self): super().__init__(timeout=None)
         
     @ui.button(label="👤 שדוד משתמש (Rob)", style=discord.ButtonStyle.secondary, custom_id="he_user")
     async def rob_user(self, i: discord.Interaction, b: ui.Button):
+        jail_list = get_jail_list_from_db()
         if i.user.id in jail_list: 
             return await i.response.send_message("❌ אתה בכלא, אי אפשר לבצע פשעים!", ephemeral=True)
         view = ui.View()
@@ -248,72 +309,66 @@ class HeistView(ui.View):
             select.disabled = True
             await inter.message.edit(view=view)
             target = select.values[0]
-            if target.id == inter.user.id: 
-                return await inter.response.send_message("❌ אתה לא יכול לשדוד את עצמך, טמבל.", ephemeral=True)
-            if target.id in jail_list: 
-                return await inter.response.send_message("❌ הקורבן כבר נמצא בכלא!", ephemeral=True)
+            current_jail = get_jail_list_from_db()
+            if target.id == inter.user.id: return await inter.response.send_message("❌ פדיחה, אי אפשר לשדוד את עצמך.", ephemeral=True)
+            if target.id in current_jail: return await inter.response.send_message("❌ הקורבן בכלא!", ephemeral=True)
             
             p_view = PoliceView(inter.user)
-            await inter.response.send_message(f"🔫 השוד התחיל! שלחנו הודעה חשאית ל-{target.name}. יש לו 10 שניות להזעיק משטרה!", ephemeral=True)
-            try: 
-                await target.send(f"⚠️ **ניסיון שוד!** המשתמש {inter.user.name} מנסה לשדוד אותך כרגע! לחץ מהר על הכפתור:", view=p_view)
-            except: 
-                return await inter.followup.send("❌ לא ניתן לשדוד משתמש זה (הודעות פרטיות חסומות).", ephemeral=True)
-            
-            await asyncio.sleep(10)
-            if not p_view.called:
-                target_bal = user_balances.get(target.id, 0)
-                if target_bal <= 0: 
-                    return await inter.followup.send(f"❌ השוד נכשל! הקורבן {target.name} תפרן.", ephemeral=True)
-                loot = random.randint(1000, min(3000, target_bal))
-                user_balances[inter.user.id] = user_balances.get(inter.user.id, 0) + loot
-                user_balances[target.id] -= loot
-                await inter.followup.send(f"💰 השוד הצליח! ברחת מהזירה וגנבת מ-{target.name} סכום של ₪{loot}!", ephemeral=True)
-                try: 
-                    await target.send(f"💸 השוד הצליח. {inter.user.name} שדד ממך ₪{loot}.")
-                except: 
-                    pass
+            await inter.call_police_setup(inter, target, p_view)
                     
         select.callback = callback
         view.add_item(select)
         await i.response.send_message("בחר קורבן:", view=view, ephemeral=True)
 
+    async def inter_call_police_setup(self, inter, target, p_view):
+        await inter.response.send_message(f"🔫 השוד התחיל! שלחנו הודעה חשאית ל-{target.name}. יש לו 10 שניות להזעיק משטרה!", ephemeral=True)
+        try: await target.send(f"⚠️ **ניסיון שוד!** המשתמש {inter.user.name} מנסה לשדוד אותך! לחץ מהר:", view=p_view)
+        except: return await inter.followup.send("❌ לא ניתן לשדוד משתמש זה (פרטי חסום).", ephemeral=True)
+        
+        await asyncio.sleep(10)
+        if not p_view.called:
+            target_bal = get_user_data(target.id, 'balance', 0)
+            if target_bal <= 0: return await inter.followup.send("❌ השוד נכשל! הקורבן תפרן.", ephemeral=True)
+            loot = random.randint(1000, min(3000, target_bal))
+            set_user_data(inter.user.id, 'balance', get_user_data(inter.user.id, 'balance', 0) + loot)
+            set_user_data(target.id, 'balance', target_bal - loot)
+            await inter.followup.send(f"💰 השוד הצליח! גנבת מ- {target.name} סכום של ₪{loot}!", ephemeral=True)
+
     @ui.button(label="🏦 שוד בנק (Bank Heist)", style=discord.ButtonStyle.danger, custom_id="he_bank")
     async def rob_bank(self, i: discord.Interaction, b: ui.Button):
-        if i.user.id in jail_list: 
-            return await i.response.send_message("❌ אתה בכלא, תשתחרר קודם!", ephemeral=True)
+        if i.user.id in get_jail_list_from_db(): return await i.response.send_message("❌ אתה בכלא!", ephemeral=True)
         await i.response.send_modal(BankHeistModal())
 
     @ui.button(label="🔓 שחרור בערבות (₪5,000)", style=discord.ButtonStyle.success, custom_id="he_bail")
     async def bail_friend(self, i: discord.Interaction, b: ui.Button):
-        if user_balances.get(i.user.id, 0) < 5000: 
-            return await i.response.send_message("❌ אין לך ₪5,000 בשביל לשלם ערבות!", ephemeral=True)
+        my_bal = get_user_data(i.user.id, 'balance', 0)
+        if my_bal < 5000: return await i.response.send_message("❌ אין לך ₪5,000!", ephemeral=True)
         view = ui.View()
-        select = ui.UserSelect(placeholder="בחר את החבר שתרצה לשחרר מהכלא...")
+        select = ui.UserSelect(placeholder="בחר חבר לשחרור...")
         
         async def callback(select_inter: discord.Interaction):
             select.disabled = True
             await select_inter.message.edit(view=view)
             friend = select.values[0]
-            if friend.id in jail_list:
-                del jail_list[friend.id]
-                user_balances[i.user.id] -= 5000
-                await select_inter.response.send_message(f"🔓 שילמת ₪5,000 ערבות! המשתמש {friend.mention} שוחרר מהכלא ברגע זה.")
-            else: 
-                await select_inter.response.send_message("❌ השחקן הזה לא נמצא בכלא אחי.", ephemeral=True)
+            if friend.id in get_jail_list_from_db():
+                remove_from_jail_db(friend.id)
+                set_user_data(i.user.id, 'balance', my_bal - 5000)
+                await select_inter.response.send_message(f"🔓 שילמת ערבות! {friend.mention} שוחרר מהכלא.")
+            else: await select_inter.response.send_message("❌ הוא לא בכלא.", ephemeral=True)
                 
         select.callback = callback
         view.add_item(select)
-        await i.response.send_message("בחר חבר לשחרור:", view=view, ephemeral=True)
+        await i.response.send_message("בחר חבר:", view=view, ephemeral=True)
 
 
 # ==========================================
-# --- 4. קלאס הבוט והלופים הפנימיים ---
+# --- 5. קלאס הבוט ומערכת אבטחה מורחבת ---
 # ==========================================
 class CyberMasterBot(commands.Bot):
     def __init__(self): 
         super().__init__(command_prefix="!", intents=discord.Intents.all())
-        
+        self.invites = {} 
+
     async def setup_hook(self):
         self.add_view(ShopView())
         self.add_view(HeistView())
@@ -325,9 +380,8 @@ class CyberMasterBot(commands.Bot):
     @tasks.loop(seconds=30)
     async def jail_loop(self):
         now = datetime.now()
-        to_release = [uid for uid, release_time in jail_list.items() if now >= release_time]
-        for uid in to_release: 
-            del jail_list[uid]
+        for uid, release_time in list(get_jail_list_from_db().items()):
+            if now >= release_time: remove_from_jail_db(uid)
 
     @tasks.loop(minutes=5)
     async def lb_loop(self):
@@ -337,352 +391,271 @@ class CyberMasterBot(commands.Bot):
                 try:
                     msg = await ch.fetch_message(leaderboard_config["message_id"])
                     emb = discord.Embed(title="🏆 טבלת עשירים - Cyber Economy", color=0xffd700, timestamp=datetime.now())
-                    sorted_users = sorted(user_balances.items(), key=lambda x: x[1], reverse=True)[:10]
+                    all_bals = get_all_balances()
+                    sorted_users = sorted(all_bals.items(), key=lambda x: x[1], reverse=True)[:10]
                     emb.description = "\n".join([f"**#{idx+1}** <@{uid}>  get ₪{bal:,}" for idx, (uid, bal) in enumerate(sorted_users)]) if sorted_users else "אין מידע עדיין."
                     await msg.edit(embed=emb)
-                except: 
-                    pass
+                except: pass
 
 bot = CyberMasterBot()
 
-
-# ==========================================
-# --- 5. פקודת שחזור חירום מובנית ---
-# ==========================================
-@bot.tree.command(name="emergency_restore", description="[אונר] בנייה מחדש של קטגוריות וחדרים בעיצוב מושלם ועדכון ה-IDs שלהם.")
-async def emergency_restore(i: discord.Interaction):
-    global CHANNELS
-    if i.user.id != MY_USER_ID:
-        return await i.response.send_message("❌ פקודת חירום מוגדרת לאונר השרת בלבד!", ephemeral=True)
+# --- 🚨 מערכת ANTI-SPAM (הודעות בצ'אט) ---
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot or not message.guild: return
     
-    await i.response.send_message("🚨 מתחיל שחזור חירום ועיצוב מחדש של השרת לפי המודל המדויק...", ephemeral=True)
-    g = i.guild
+    # בדיקה שהמשתמש הוא לא אונר/אדמין כדי שלא יקבל מיוט בטעות
+    if message.author.id == MY_USER_ID or message.author.guild_permissions.administrator:
+        await bot.process_commands(message)
+        return
 
-    try:
-        # א. יצירת הקטגוריות בעיצוב הנכון
-        cat_info = await g.create_category("📢 ❘ INFO & LINKS")
-        cat_events = await g.create_category("🎉 ❘ EVENTS ZONE")
-        cat_bot = await g.create_category("🤖 ❘ CYBER SYSTEMS")
-        cat_logs = await g.create_category("🛡️ ❘ SECURITY LOGS")
-
-        # ב. יצירת החדרים לפי העיצוב המבוקש מהתמונה ועדכון מילון ה-CHANNELS
+    now = datetime.now()
+    user_id = message.author.id
+    
+    if user_id not in spam_tracker:
+        spam_tracker[user_id] = []
         
-        # 1. קטגוריית אינפו
-        ch_welcome = await g.create_text_channel("👋・welcome", category=cat_info)
-        CHANNELS["WELCOME"] = ch_welcome.id
-        await g.create_text_channel("📢・announcments", category=cat_info)
-        await g.create_text_channel("⚙・auto-role", category=cat_info)
-        await g.create_text_channel("📖・tutorial", category=cat_info)
+    spam_tracker[user_id].append(now)
+    # משאירים רק הודעות מה-3 שניות האחרונות
+    spam_tracker[user_id] = [t for t in spam_tracker[user_id] if now - t < timedelta(seconds=3)]
+    
+    # הגבלה: מעל 5 הודעות ב-3 שניות = ספאם!
+    if len(spam_tracker[user_id]) > 5:
+        spam_tracker[user_id] = [] # איפוס
+        try:
+            await message.channel.purge(limit=5, check=lambda m: m.author.id == user_id)
+        except: pass
+        
+        mute_role = message.guild.get_role(ROLES["MUTE"])
+        if mute_role:
+            await message.author.add_roles(mute_role)
+            
+        # תיעוד בבלוגים החסויים ובלוג האזהרות בפיירבייס
+        warn_ch = message.guild.get_channel(CHANNELS["WARNS_LOG"])
+        if warn_ch:
+            emb = discord.Embed(title="🚨 מערכת אנטי-ספאם הופעלה!", color=0xff0000, timestamp=now)
+            emb.description = f"המשתמש {message.author.mention} ספים בצ'אט והושתק אוטומטית לשמירה על השרת."
+            await warn_ch.send(embed=emb)
+            
+        current_warns = get_user_data(user_id, 'warns', 0) + 1
+        set_user_data(user_id, 'warns', current_warns)
+        return
 
-        # 2. קטגוריית איוונטים ופשע
-        ch_heist = await g.create_text_channel("🔫・heist-zone", category=cat_events)
-        await g.create_text_channel("🎁・giveaway", category=cat_events)
-        await g.create_text_channel("💎・boosts", category=cat_events)
-        await g.create_text_channel("💰・drop", category=cat_events)
-        await g.create_text_channel("📊・price", category=cat_events)
+    await bot.process_commands(message)
 
-        # 3. קטגוריית מערכות הבוט
-        ch_sug = await g.create_text_channel("💡・suggestions", category=cat_bot)
-        CHANNELS["SUGGESTIONS"] = ch_sug.id
-        ch_feed = await g.create_text_channel("📩・feedback", category=cat_bot)
-        CHANNELS["FEEDBACK"] = ch_feed.id
-        await g.create_text_channel("💬・spammer", category=cat_bot)
-        ch_verify = await g.create_text_channel("🛡・verify", category=cat_bot)
+# --- 🚨 איוונטים: כניסת משתמשים + מערכת ANTI-RAID ---
+@bot.event
+async def on_ready():
+    print(f"✅ {bot.user.name} באוויר ומוגן קומפלט ב-Railway!")
+    for guild in bot.guilds:
+        try: bot.invites[guild.id] = await guild.invites()
+        except: pass
 
-        # 4. קטגוריית לוגים ומודרציה
-        ch_rep = await g.create_text_channel("🚨・reports-log", category=cat_logs)
-        CHANNELS["REPORTS"] = ch_rep.id
-        ch_owner_logs = await g.create_text_channel("🔒・owner-logs", category=cat_logs)
-        CHANNELS["OWNER_LOGS"] = ch_owner_logs.id
-        ch_warns = await g.create_text_channel("⚠️・warns-log", category=cat_logs)
-        CHANNELS["WARNS_LOG"] = ch_warns.id
-        ch_alt = await g.create_text_channel("🤖・anti-alt", category=cat_logs)
-        CHANNELS["ANTI_ALT"] = ch_alt.id
+@bot.event
+async def on_member_join(member: discord.Member):
+    global raid_mode_active
+    now = datetime.now()
+    
+    # 1. מערכת ANTI-RAID (Join Flood)
+    join_tracker.append(now)
+    # מסננים כניסות מעבר ל-10 שניות האחרונות
+    globals()['join_tracker'] = [t for t in join_tracker if now - t < timedelta(seconds=10)]
+    
+    # אם נכנסו יותר מ-8 אנשים ב-10 שניות = התקפת בוטים/רייד!
+    if len(join_tracker) > 8 and not raid_mode_active:
+        raid_mode_active = True
+        log_ch = member.guild.get_channel(CHANNELS["OWNER_LOGS"])
+        if log_ch:
+            await log_ch.send("🚨 **מערכת ANTI-RAID הופעלה!** זוהה עומס כניסות חריג. חדר האימות ננעל זמנית להגנה!")
+        
+        # נעילת חדר ה-Verify (ביטול הרשאת כתיבה/צפייה לכולם)
+        verify_ch = member.guild.get_channel(1501316672345211041) # חדר הוריפיי שלך
+        if verify_ch:
+            overwrite = verify_ch.overwrites_for(member.guild.default_role)
+            overwrite.send_messages = False
+            overwrite.view_channel = False
+            await verify_ch.set_permissions(member.guild.default_role, overwrite=overwrite)
 
-        # ג. שליחת פאנלים אוטומטית לחדרים החדשים
-        emb_v = discord.Embed(title="🛡️ מערכת אימות הגנה - Verify", description="על מנת לקבל גישה לשאר ערוצי השרת ולמנוע כניסת בוטים, לחצו על הכפתור הירוק למטה.", color=0x00ff00)
-        await ch_verify.send(embed=emb_v, view=VerifyView())
+    # 2. מערכת אבטחה: זיהוי פרופילים חדשים (Anti-Alt)
+    account_age = now - member.created_at.replace(tzinfo=None)
+    if account_age < timedelta(days=10):
+        alt_ch = member.guild.get_channel(CHANNELS["ANTI_ALT"])
+        if alt_ch:
+            emb_alt = discord.Embed(title="🚨 התרעת משתמש חשוד (Anti-Alt)", color=0xffa500, timestamp=now)
+            emb_alt.add_field(name="המשתמש:", value=f"{member.mention} (`{member.name}`)", inline=True)
+            emb_alt.add_field(name="וותק חשבון:", value=f"`{account_age.days}` ימים", inline=False)
+            await alt_ch.send(embed=emb_alt)
 
-        emb_h = discord.Embed(title="🔫 עולם הפשע והחוק - Heist Panel", description="בצע שודים, פוצץ את כספות הבנק או שחרר חברים מהכלא בערבות כספית!", color=0x000000)
-        await ch_heist.send(embed=emb_h, view=HeistView())
+    # 3. מערכת מעקב הזמנות (Invites Tracker)
+    welcome_ch = member.guild.get_channel(CHANNELS["WELCOME"])
+    inviter_text = "לא נמצא (או Vanity URL)"
+    try:
+        old_invites = bot.invites.get(member.guild.id, [])
+        new_invites = await member.guild.invites()
+        bot.invites[member.guild.id] = new_invites  
+        for invite in old_invites:
+            for new_invite in new_invites:
+                if invite.code == new_invite.code and new_invite.uses > invite.uses:
+                    inviter_text = f"{invite.inviter.mention}"
+                    break
+    except: pass
 
-        await i.followup.send("✅ השרת נבנה מחדש בעיצוב מושלם! ה-IDs במערכת עודכנו אוטומטית לחדרים החדשים והפאנלים נשלחו.", ephemeral=True)
+    if welcome_ch and not raid_mode_active:
+        emb_welcome = discord.Embed(title="👋 ברוך הבא לשרת!", description=f"שלום {member.mention}, שמחים שהצטרפת אלינו!", color=0x00ff00, timestamp=now)
+        emb_welcome.add_field(name="🔗 הוזמן על ידי:", value=inviter_text, inline=True)
+        await welcome_ch.send(embed=emb_welcome)
 
-    except Exception as e:
-        await i.followup.send(f"❌ שגיאה במהלך יצירת החדרים: {e}", ephemeral=True)
 
-
-# --- פקודות הסטאפ הידניות הרגילות ---
-@bot.tree.command(name="setup_shop", description="[מנהל/אונר] מקים את פאנל החנות הכולל בדיקת יתרה, עבודה ורולים.")
+# ==========================================
+# --- 6. פקודות סטאפ ידניות ---
+# ==========================================
+@bot.tree.command(name="setup_shop", description="[מנהל/אונר] מקים את פאנל החנות.")
 async def s_shop(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "setup_shop")]
-        return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
-    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהל את הבנק שלך, צา לעבוד ורכוש הטבות ייחודיות ורולים מיוחדים!", color=0x2b2d31)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_shop")
+    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהל את הבנק שלך, צา לעבוד ורכוש הטבות ורולים מיוחדים!", color=0x2b2d31)
     await i.channel.send(embed=emb, view=ShopView())
-    await i.response.send_message("✅ פאנל חנות משודרג הוקם בהצלחה!", ephemeral=True)
+    await i.response.send_message("✅ פאנל חנות הוקם!", ephemeral=True)
 
-@bot.tree.command(name="setup_leaderboard", description="[מנהל/אונר] מקים את טבלת העשירים המתעדכנת במיקום זה כל 5 דקות.")
+@bot.tree.command(name="setup_leaderboard", description="[מנהל/אונר] מקים את טבלת העשירים.")
 async def s_leaderboard(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "setup_leaderboard")]
-        return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_leaderboard")
     emb = discord.Embed(title="🏆 טבלת עשירים - Cyber Economy", description="הטבלה בטעינה, תתעדכן אוטומטית בעוד מספר רגעים...", color=0xffd700, timestamp=datetime.now())
     msg = await i.channel.send(embed=emb)
     leaderboard_config["channel_id"] = i.channel.id
     leaderboard_config["message_id"] = msg.id
-    await i.response.send_message("✅ פאנל ליידרבורד הוקם ויועבר לעדכון אוטומטי כל 5 דקות!", ephemeral=True)
+    await i.response.send_message("✅ ליידרבורד הוקם ויועבר לעדכון אוטומטי!", ephemeral=True)
 
-@bot.tree.command(name="setup_heist", description="[מנהל/אונר] מקים את פאנל השודים, עולם הפשע והערבות.")
+@bot.tree.command(name="setup_heist", description="[מנהל/אונר] מקים את פאנל השודים ועולם הפשע.")
 async def s_heist(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "setup_heist")]
-        return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_heist")
     emb = discord.Embed(title="🔫 עולם הפשע והחוק - Heist Panel", description="בצע שודים, פוצץ את כספות הבנק או שחרר חברים מהכלא בערבות כספית!", color=0x000000)
     await i.channel.send(embed=emb, view=HeistView())
     await i.response.send_message("✅ פאנל שודים הוקם בהצלחה!", ephemeral=True)
 
-@bot.tree.command(name="setup_tickets", description="[מנהל/אונר] מקים פאנל מאוחד להגשת דיווחים והצעות לשיפור השרת.")
+@bot.tree.command(name="setup_tickets", description="[מנהל/אונר] פאנל דיווחים והצעות במרכז המאוחד.")
 async def s_tickets(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "setup_tickets")]
-        return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_tickets")
     v = ui.View(timeout=None)
     b_rep = ui.Button(label="🚨 דווח על שחקן", style=discord.ButtonStyle.danger, custom_id="tk_rep")
     b_sug = ui.Button(label="💡 שלח הצעה לשיפור", style=discord.ButtonStyle.secondary, custom_id="tk_sug")
     b_rep.callback = lambda inter: inter.response.send_modal(ReportModal())
     b_sug.callback = lambda inter: inter.response.send_modal(SuggestionModal())
-    v.add_item(b_rep)
-    v.add_item(b_sug)
-    await i.channel.send("📩 **מרכז פניות ודיווחים - Tickets & Suggestions**\nלחצו על הכפתור המתאים למטה כדי לפתוח טופס פנייה ישירות לצוות המנהלים.", view=v)
-    await i.response.send_message("✅ פאנל דיווחים והצעות מאוחד הוקם בהצלחה!", ephemeral=True)
+    v.add_item(b_rep).add_item(b_sug)
+    await i.channel.send("📩 **מרכז פניות ודיווחים - Tickets & Suggestions**", view=v)
+    await i.response.send_message("✅ פאנל מאוחד הוקם!", ephemeral=True)
 
-@bot.tree.command(name="setup_feedback", description="[מנהל/אונר] מקים את פאנל שליחת הפידבקים של השרת.")
+@bot.tree.command(name="setup_feedback", description="[מנהל/אונר] פאנל פידבקים.")
 async def s_feedback(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "setup_feedback")]
-        return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_feedback")
     v = ui.View(timeout=None)
     b = ui.Button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="f_open")
     b.callback = lambda inter: inter.response.send_modal(FeedbackModal())
     v.add_item(b)
-    await i.channel.send("📩 **פאנל פידבקים רשמי**\nלחצו על הכפתור למטה כדי להביע את דעתכם על השרת! ניתן לשלוח כאנונימי.", view=v)
-    await i.response.send_message("✅ פאנל פידבקים הוקם בהצלחה!", ephemeral=True)
+    await i.channel.send("📩 **פאנל פידבקים רשמי**", view=v)
+    await i.response.send_message("✅ פאנל פידבקים הוקם!", ephemeral=True)
 
-@bot.tree.command(name="setup_verify", description="[מנהל/אונר] מקים את פאנל מערכת האימות (Verify) בכניסה לשרת.")
+@bot.tree.command(name="setup_verify", description="[מנהל/אונר] פאנל מערכת האימות.")
 async def s_verify(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "setup_verify")]
-        return await i.response.send_message("❌ פקודה זו חסומה עבורך.", ephemeral=True)
-    emb = discord.Embed(title="🛡️ מערכת אימות הגנה - Verify", description="על מנת לקבל גישה לשאר ערוצי השרת ולמנוע כניסת בוטים, לחצו על הכפתור הירוק למטה.", color=0x00ff00)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_verify")
+    emb = discord.Embed(title="🛡️ מערכת אימות הגנה - Verify", description="לחצו על הכפתור הירוק למטה כדי לקבל גישה לשרת.", color=0x00ff00)
     await i.channel.send(embed=emb, view=VerifyView())
-    await i.response.send_message("✅ פאנל אימות הוקם בהצלחה!", ephemeral=True)
+    await i.response.send_message("✅ פאנל אימות הוקם!", ephemeral=True)
+
+# פקודת אונר מיוחדת לכיבוי מצב רייד ידנית
+@bot.tree.command(name="unraid", description="[אונר בלבד] מכבה את מצב ה-Raid ופותח מחדש את חדר האימות.")
+async def unraid(i: discord.Interaction):
+    global raid_mode_active
+    if i.user.id != MY_USER_ID: return await send_unauthorized_alert(i, "unraid")
+    raid_mode_active = False
+    verify_ch = i.guild.get_channel(1501316672345211041)
+    if verify_ch:
+        overwrite = verify_ch.overwrites_for(i.guild.default_role)
+        overwrite.send_messages = None
+        overwrite.view_channel = True
+        await verify_ch.set_permissions(i.guild.default_role, overwrite=overwrite)
+    await i.response.send_message("🔓 מצב ה-Raid בוטל בהצלחה. חדר האימות נפתח מחדש!", ephemeral=True)
 
 
 # ==========================================
-# --- 6. פקודות מודרציה, ניהול וכלכלה ---
+# --- 7. פקודות מודרציה, ניהול וכלכלה ---
 # ==========================================
 @bot.tree.command(name="pay", description="[כללי] העבר סכום כסף מחשבונך האישי ישירות לחשבון של חבר.")
 async def pay(i: discord.Interaction, to: discord.Member, amount: int):
-    if amount <= 0: 
-        return await i.response.send_message("❌ נא להזין סכום תקין הגבוה מ-0 שקלים.", ephemeral=True)
-    my_bal = user_balances.get(i.user.id, 0)
-    if my_bal < amount: 
-        return await i.response.send_message(f"❌ העברה נכשלה! חסר לך ₪{amount - my_bal} בחשבון הנוכחי.", ephemeral=True)
-    user_balances[i.user.id] -= amount
-    user_balances[to.id] = user_balances.get(to.id, 0) + amount
+    if amount <= 0: return await i.response.send_message("❌ נא להזין סכום תקין הגבוה מ-0.", ephemeral=True)
+    my_bal = get_user_data(i.user.id, 'balance', 0)
+    if my_bal < amount: return await i.response.send_message(f"❌ העברה נכשלה! חסר לך ₪{amount - my_bal}.", ephemeral=True)
+    set_user_data(i.user.id, 'balance', my_bal - amount)
+    set_user_data(to.id, 'balance', get_user_data(to.id, 'balance', 0) + amount)
     await i.response.send_message(f"💸 העברת בהצלחה סכום של **₪{amount:,}** לחשבון של {to.mention}!")
 
-@bot.tree.command(name="jail_add", description="[צוות כלא / מנהל / אונר] שולח משתמש לכלא באופן ידני ומיידי למשך שעתיים.")
+@bot.tree.command(name="jail_add", description="[צוות כלא/מנהל/אונר] שולח משתמש לכלא לשעתיים.")
 async def jail_add(i: discord.Interaction, member: discord.Member):
-    if not is_owner_or_jail_staff(i): 
-        [await send_unauthorized_alert(i, "jail_add", "צוות כלא / מנהל / אונר")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו חסומה עבורך.", ephemeral=True)
-    jail_list[member.id] = datetime.now() + timedelta(hours=2)
-    await i.response.send_message(f"✅ הפקודה בוצעה בהצלחה! 🔒 המשתמש {member.mention} ננעל בתוך הכלא למשך שעתיים.")
+    if not is_owner_or_jail_staff(i): return await send_unauthorized_alert(i, "jail_add", "צוות כלא / מנהל / אונר")
+    add_to_jail_db(member.id, datetime.now() + timedelta(hours=2))
+    await i.response.send_message(f"✅ 🔒 המשתמש {member.mention} ננעל בתוך הכלא למשך שעתיים.")
 
-@bot.tree.command(name="jail_remove", description="[צוות כלא / מנהל / אונר] משחרר משתמש מהכלא באופן ידני ומיידי.")
+@bot.tree.command(name="jail_remove", description="[צוות כלא/מנהל/אונר] משחרר משתמש מהכלא.")
 async def jail_remove(i: discord.Interaction, member: discord.Member):
-    if not is_owner_or_jail_staff(i): 
-        [await send_unauthorized_alert(i, "jail_remove", "צוות כלא / מנהל / אונר")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו חסומה עבורך.", ephemeral=True)
-    if member.id in jail_list: 
-        del jail_list[member.id]
-        await i.response.send_message(f"✅ הפקודה בוצעה בהצלחה! 🔓 המשתמש {member.mention} שוחרר מהכלא על ידי צוות המערכת.")
-    else: 
-        await i.response.send_message("❌ הפקודה נכשלה: המשתמש אינו נמצא ברשימת האסורים בכלא.", ephemeral=True)
+    if not is_owner_or_jail_staff(i): return await send_unauthorized_alert(i, "jail_remove", "צוות כלא / מנהל / אונר")
+    if member.id in get_jail_list_from_db(): 
+        remove_from_jail_db(member.id)
+        await i.response.send_message(f"✅ 🔓 המשתמש {member.mention} שוחרר מהכלא.")
+    else: await i.response.send_message("❌ המשתמש אינו בכלא.", ephemeral=True)
 
-@bot.tree.command(name="warn", description="[מנהל / אונר] נותן אזהרה רשמית למשתמש. באזהרה השלישית הוא מקבל מיוט.")
+@bot.tree.command(name="warn", description="[מנהל/אונר] נותן אזהרה למשתמש. באזהרה השלישית הוא מקבל מיוט.")
 async def warn(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "warn")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
-    user_warns[member.id] = user_warns.get(member.id, 0) + 1
-    count = user_warns[member.id]
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "warn")
+    current_warns = get_user_data(member.id, 'warns', 0) + 1
+    set_user_data(member.id, 'warns', current_warns)
     log = i.guild.get_channel(CHANNELS["WARNS_LOG"])
-    if log:
-        await log.send(f"⚠️ **אזהרה רשמית** | {member.mention} הוזהר על ידי {i.user.mention}.\nסיבה: `{reason}`\nמצב אזהרות: `{count}/3`")
-    if count >= 3: 
+    if log: await log.send(f"⚠️ **אזהרה** | {member.mention} הוזהר על ידי {i.user.mention}. סיבה: `{reason}` (`{current_warns}/3`)")
+    if current_warns >= 3: 
         role = i.guild.get_role(ROLES["MUTE"])
-        if role:
-            await member.add_roles(role)
-        if log:
-            await log.send(f"🚫 המשתמש {member.mention} הגיע ל-3 אזהרות והושתק (Mute) אוטומטית.")
-    await i.response.send_message(f"✅ האזהרה נרשמה בהצלחה למשתמש (אזהרה מספר {count}/3).", ephemeral=True)
+        if role: await member.add_roles(role)
+    await i.response.send_message(f"✅ האזהרה נרשמה ({current_warns}/3).", ephemeral=True)
 
-@bot.tree.command(name="unwarn", description="[מנהל / אונר] מוריד אזהרה אחת למשתמש שחטא.")
+@bot.tree.command(name="unwarn", description="[מנהל/אונר] מוריד אזהרה אחת למשתמש.")
 async def unwarn(i: discord.Interaction, member: discord.Member):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "unwarn")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
-    current = user_warns.get(member.id, 0)
-    if current <= 0: 
-        return await i.response.send_message("❌ למשתמש זה אין אף אזהרה פעילה בשרת.", ephemeral=True)
-    user_warns[member.id] -= 1
-    await i.response.send_message(f"✅ הורדה אזהרה בהצלחה. מצבו הנוכחי: `{user_warns[member.id]}/3` אזהרות.", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "unwarn")
+    current_warns = get_user_data(member.id, 'warns', 0)
+    if current_warns <= 0: return await i.response.send_message("❌ למשתמש אין אזהרות.", ephemeral=True)
+    set_user_data(member.id, 'warns', current_warns - 1)
+    await i.response.send_message(f"✅ הורדה אזהרה. מצבו הנוכחי: `{current_warns - 1}/3`", ephemeral=True)
 
-@bot.tree.command(name="mute", description="[מנהל / אונר] מקצה באופן ידני רול השתקה (Mute) למשתמש.")
+@bot.tree.command(name="mute", description="[מנהל/אונר] מקצה רול השתקה (Mute) למשתמש.")
 async def mute(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "mute")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "mute")
     role = i.guild.get_role(ROLES["MUTE"])
-    if role:
-        await member.add_roles(role)
-    await i.response.send_message(f"🚫 המשתמש {member.mention} הושתק בהצלחה מהצ'אטים. סיבה: `{reason}`")
+    if role: await member.add_roles(role)
+    await i.response.send_message(f"🚫 {member.mention} הושתק. סיבה: `{reason}`")
 
-@bot.tree.command(name="unmute", description="[מנהל / אונר] מסיר את רול ההשתקה (Mute) ומשחרר את המשתמש לצ'אט.")
+@bot.tree.command(name="unmute", description="[מנהל/אונר] מסיר רול השתקה.")
 async def unmute(i: discord.Interaction, member: discord.Member):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "unmute")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "unmute")
     role = i.guild.get_role(ROLES["MUTE"])
-    if role:
-        await member.remove_roles(role)
-    await i.response.send_message(f"🔊 המשתמש {member.mention} שוחרר מההשתקה ויכול לדבר.")
+    if role: await member.remove_roles(role)
+    await i.response.send_message(f"🔊 {member.mention} שוחרר מההשתקה.")
 
-@bot.tree.command(name="kick", description="[מנהל / אונר] מגרש ומעיף משתמש מהשרת.")
+@bot.tree.command(name="kick", description="[מנהל/אונר] מגרש משתמש מהשרת.")
 async def kick(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "kick")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "kick")
     await member.kick(reason=reason)
-    await i.response.send_message(f"👞 המשתמש `{member.name}` הועף מהשרת בהצלחה. סיבה: `{reason}`")
+    await i.response.send_message(f"👞 המשתמש `{member.name}` הועף מהשרת. סיבה: `{reason}`")
 
-@bot.tree.command(name="ban", description="[מנהל / אונר] חוסם משתמש מהשרת באופן מוחלט (Ban).")
+@bot.tree.command(name="ban", description="[מנהל/אונר] חוסם משתמש מהשרת.")
 async def ban(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "ban")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "ban")
     await member.ban(reason=reason)
-    await i.response.send_message(f"🚫 המשתמש `{member.name}` נחסם מהשרת בהצלחה ובאופן מוחלט. סיבה: `{reason}`")
+    await i.response.send_message(f"🚫 המשתמש `{member.name}` נחסם מהשרת. סיבה: `{reason}`")
 
-@bot.tree.command(name="clear", description="[מנהל / אונר] מוחק כמות מסוימת של הודעות מהערוץ הנוכחי.")
+@bot.tree.command(name="clear", description="[מנהל/אונר] מוחק הודעות מהערוץ הנוכחי.")
 async def clear(i: discord.Interaction, amount: int):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "clear")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
-    if amount <= 0: 
-        return await i.response.send_message("❌ נא להזין מספר הודעות הגבוה מ-0.", ephemeral=True)
+    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "clear")
+    if amount <= 0: return await i.response.send_message("❌ הזן מספר תקין.", ephemeral=True)
     await i.channel.purge(limit=amount)
-    await i.response.send_message(f"🗑️ הערוץ נוקה בהצלחה! נמחקו `{amount}` הודעות אחרונות.", ephemeral=True)
+    await i.response.send_message(f"🧹 נמחקו בהצלחה `{amount}` הודעות!", ephemeral=True)
 
-@bot.tree.command(name="slowmode", description="[מנהל / אונר] קובע דיליי ואיטיות (Slowmode) בשניות בערוץ הנוכחי.")
-async def slowmode(i: discord.Interaction, seconds: int):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "slowmode")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
-    await i.channel.edit(slowmode_delay=seconds)
-    await i.response.send_message(f"⏱️ הוגגר מצב איטי לערוץ זה בהצלחה. דיליי: `{seconds}` שניות.")
-
-@bot.tree.command(name="add_money", description="[מנהל / אונר] מוסיף שקלים ומטבעות לחשבונו של משתמש כלשהו בשרת.")
-async def add_money(i: discord.Interaction, member: discord.Member, amount: int):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "add_money")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
-    user_balances[member.id] = user_balances.get(member.id, 0) + amount
-    await i.response.send_message(f"💰 הדפסת בהצלחה **₪{amount:,}** והפקדת אותם לחשבון של {member.mention}!", ephemeral=True)
-
-@bot.tree.command(name="remove_money", description="[מנהל / אונר] מוריד ומאפס שקלים מחשבונו של משתמש כלשהו בשרת.")
-async def remove_money(i: discord.Interaction, member: discord.Member, amount: int):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "remove_money")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
-    user_balances[member.id] = max(0, user_balances.get(member.id, 0) - amount)
-    await i.response.send_message(f"📉 קנס רשמי: הורדת בהצלחה **₪{amount:,}** מהחשבון של {member.mention}.", ephemeral=True)
-
-@bot.tree.command(name="user_info", description="[מנהל / אונר] מציג מידע ונתונים מפורטים אודות משתמש בשרת.")
-async def user_info(i: discord.Interaction, member: discord.Member):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "user_info")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
-    emb = discord.Embed(title=f"👤 מידע על: {member.name}", color=0x5865f2)
-    emb.add_field(name="מזהה (ID):", value=member.id, inline=True)
-    emb.add_field(name="יתרת בנק:", value=f"₪{user_balances.get(member.id, 0):,}", inline=True)
-    emb.add_field(name="כמות אזהרות:", value=f"{user_warns.get(member.id, 0)}/3", inline=True)
-    emb.add_field(name="האם בכלא?", value="כן" if member.id in jail_list else "לא", inline=True)
-    emb.add_field(name="הצטרף לשרת:", value=member.joined_at.strftime("%d/%m/%Y") if member.joined_at else "לא ידוע", inline=False)
-    await i.response.send_message(embed=emb)
-
-@bot.tree.command(name="server_info", description="[מנהל / אונר] מציג נתונים טכניים וסטטיסטיקות אודות שרת הדיסקורד.")
-async def server_info(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): 
-        [await send_unauthorized_alert(i, "server_info")]
-        return await i.response.send_message("❌ שגיאה: פקודה זו מוגדרת למנהלים ואונר בלבד!", ephemeral=True)
-    g = i.guild
-    emb = discord.Embed(title=f"📊 סטטיסטיקת השרת: {g.name}", color=0x5865f2)
-    emb.add_field(name="סך הכל חברים:", value=g.member_count, inline=True)
-    emb.add_field(name="כמות רולים:", value=len(g.roles), inline=True)
-    emb.add_field(name="כמות ערוצים:", value=len(g.channels), inline=True)
-    emb.set_thumbnail(url=g.icon.url if g.icon else None)
-    await i.response.send_message(embed=emb)
-
-
-# ==========================================
-# --- 7. מערכות אוטומטיות ואירועים (Events) ---
-# ==========================================
-@bot.event
-async def on_member_join(member: discord.Member):
-    welcome_ch = member.guild.get_channel(CHANNELS["WELCOME"])
-    if welcome_ch: 
-        await welcome_ch.send(f"👋 ברוך הבא לשרת {member.mention}! נא לבצע אימות בערוץ המתאים.")
-    
-    now = datetime.utcnow()
-    creation_diff = now - member.created_at
-    if creation_diff.days < 14:
-        anti_alt_ch = member.guild.get_channel(CHANNELS["ANTI_ALT"])
-        if anti_alt_ch:
-            emb = discord.Embed(title="⚠️ התראת אנטי-אלט! (חשבון חשוד)", color=0xffa500, timestamp=datetime.now())
-            emb.add_field(name="שם משתמש:", value=member.mention)
-            emb.add_field(name="גיל החשבון:", value=f"{creation_diff.days} ימים בלבד!")
-            
-            v = ui.View(timeout=None)
-            b_kick = ui.Button(label="👞 תעיף מהשרת", style=discord.ButtonStyle.danger)
-            b_ok = ui.Button(label="✅ תשאיר אותו", style=discord.ButtonStyle.success)
-            
-            async def kick_callback(inter: discord.Interaction):
-                await member.kick(reason="Anti-Alt System")
-                await inter.response.send_message("👞 המשתמש הועף בהצלחה מהשרת.", ephemeral=True)
-                
-            async def ok_callback(inter: discord.Interaction):
-                await inter.response.send_message("✅ המשתמש אושר בשרת על ידי הצוות.", ephemeral=True)
-                
-            b_kick.callback = kick_callback
-            b_ok.callback = ok_callback
-            
-            v.add_item(b_kick)
-            v.add_item(b_ok)
-            await anti_alt_ch.send(embed=emb, view=v)
-
-@bot.event
-async def on_app_command_completion(i: discord.Interaction, cmd: app_commands.Command):
-    log_ch = i.guild.get_channel(CHANNELS["OWNER_LOGS"])
-    if log_ch:
-        emb = discord.Embed(title="🛠️ לוג פקודות מערכת אוטומטי", color=0x5865f2, timestamp=datetime.now())
-        emb.add_field(name="מפעיל הפקודה:", value=i.user.mention, inline=True)
-        emb.add_field(name="הפקודה שהורצה:", value=f"`/{cmd.name}`", inline=True)
-        emb.add_field(name="הסבר פקודה:", value=cmd.description, inline=False)
-        await log_ch.send(embed=emb)
-
-# הרצת הבוט עם הטוקן
-bot.run(TOKEN)
+# הרצת הבוט
+if __name__ == "__main__":
+    if TOKEN: bot.run(TOKEN)
+    else: print("❌ שגיאה: לא נמצא DISCORD_TOKEN.")
