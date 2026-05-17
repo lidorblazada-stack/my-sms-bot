@@ -4,6 +4,7 @@ from discord.ext import commands, tasks
 import os
 import asyncio
 import random
+import re  # ייבוא בשביל זיהוי מדויק של קישורים
 from datetime import datetime, timedelta
 import firebase_admin
 from firebase_admin import credentials, db
@@ -36,14 +37,11 @@ ROLES = {
     "VERIFIED": 1501316672345211041
 }
 
-# קולדאונדים וזיכרון זמני למערכות ההגנה
 daily_cooldown = {}   
 work_cooldown = {}    
 feedback_cooldown = {} 
 
-# זיכרון אנטי-ספאם (משתמש -> רשימת זמני הודעות)
 spam_tracker = {}
-# זיכרון אנטי-רייד (רשימת זמני כניסה של אנשים לשרת)
 join_tracker = []
 raid_mode_active = False
 
@@ -61,7 +59,6 @@ try:
 except Exception as e:
     print(f"⚠️ אזהרת חיבור ל-Firebase: {e}")
 
-# פונקציות עזר לפיירבייס
 def get_user_data(user_id, key, default_value=0):
     try:
         ref = db.reference(f'users/{user_id}/{key}')
@@ -110,8 +107,6 @@ def remove_from_jail_db(user_id):
     except:
         pass
 
-
-# --- הרשאות ואבטחה ---
 def is_owner_or_jail_staff(i: discord.Interaction):
     if i.user.id == MY_USER_ID: return True
     admin_role = i.guild.get_role(ADMIN_ACCESS_ROLE_ID)
@@ -201,9 +196,16 @@ class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
         now = datetime.now()
         if i.user.id in feedback_cooldown and now < feedback_cooldown[i.user.id] + timedelta(minutes=5):
             return await i.response.send_message("❌ יש להמתין 5 דקות בין פידבק לפידבק!", ephemeral=True)
+        
         emb = discord.Embed(title="✨ פידבק חדש מהקהילה", description=self.content.value, color=0x00ffff, timestamp=now)
         emb.set_footer(text=f"נשלח על ידי: {i.user.name if self.anon.value != 'כן' else 'אנונימי'}")
-        await i.guild.get_channel(CHANNELS["FEEDBACK"]).send(embed=emb)
+        
+        inline_view = ui.View(timeout=None)
+        b_inline = ui.Button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="f_open_inline")
+        b_inline.callback = lambda inter: inter.response.send_modal(FeedbackModal())
+        inline_view.add_item(b_inline)
+        
+        await i.guild.get_channel(CHANNELS["FEEDBACK"]).send(embed=emb, view=inline_view)
         feedback_cooldown[i.user.id] = now
         await i.response.send_message("✅ הפידבק נשלח בהצלחה, תודה לך!", ephemeral=True)
 
@@ -314,7 +316,7 @@ class HeistView(ui.View):
             if target.id in current_jail: return await inter.response.send_message("❌ הקורבן בכלא!", ephemeral=True)
             
             p_view = PoliceView(inter.user)
-            await inter.call_police_setup(inter, target, p_view)
+            await self.inter_call_police_setup(inter, target, p_view)
                     
         select.callback = callback
         view.add_item(select)
@@ -373,6 +375,13 @@ class CyberMasterBot(commands.Bot):
         self.add_view(ShopView())
         self.add_view(HeistView())
         self.add_view(VerifyView())
+        
+        inline_view = ui.View(timeout=None)
+        b_inline = ui.Button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="f_open_inline")
+        b_inline.callback = lambda inter: inter.response.send_modal(FeedbackModal())
+        inline_view.add_item(b_inline)
+        self.add_view(inline_view)
+        
         self.jail_loop.start()
         self.lb_loop.start()
         await self.tree.sync()
@@ -399,29 +408,62 @@ class CyberMasterBot(commands.Bot):
 
 bot = CyberMasterBot()
 
-# --- 🚨 מערכת ANTI-SPAM (הודעות בצ'אט) ---
+# --- 🚨 מערכות סינון והגנה לצ'אט (אנטי-ספאם ואנטי-לינק) ---
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot or not message.guild: return
     
-    # בדיקה שהמשתמש הוא לא אונר/אדמין כדי שלא יקבל מיוט בטעות
+    now = datetime.now()
+    user_id = message.author.id
+
+    # --- 🔒 מערכת ANTI-LINK (חסימת קישורים מוחלטת לכולם חוץ ממך) ---
+    if user_id != MY_USER_ID:
+        # ביטוי רגולרי לזיהוי כל סוגי הקישורים וההזמנות לשרתים
+        link_pattern = r"(https?://[^\s]+|discord\.gg/[^\s]+)"
+        if re.search(link_pattern, message.content, re.IGNORECASE):
+            try:
+                await message.delete()  # מחיקת הקישור המפוקפק
+            except: pass
+
+            # 1. הוספת אזהרה רשמית למשתמש ב-Firebase
+            current_warns = get_user_data(user_id, 'warns', 0) + 1
+            set_user_data(user_id, 'warns', current_warns)
+
+            # 2. דיווח מיידי ואישי לערוץ ה-Owner החסוי שלך
+            owner_ch = message.guild.get_channel(CHANNELS["OWNER_LOGS"])
+            if owner_ch:
+                emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
+                emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
+                emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
+                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```{message.content}```", inline=False)
+                emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
+                await owner_ch.send(embed=emb_owner)
+
+            # 3. דיווח אוטומטי ללוג הציבורי + מתן מיוט באזהרה השלישית
+            warn_ch = message.guild.get_channel(CHANNELS["WARNS_LOG"])
+            if warn_ch:
+                await warn_ch.send(f"⚠️ **אזהרה אוטומטית** | המשתמש {message.author.mention} הוזהר על ידי מערכת האבטחה. סיבה: `פרסום קישורים אסור` (`{current_warns}/3`)")
+            
+            if current_warns >= 3:
+                mute_role = message.guild.get_role(ROLES["MUTE"])
+                if mute_role: await message.author.add_roles(mute_role)
+                
+            return  # עוצר את ההודעה מלהמשיך הלאה או להפעיל פקודות
+
+    # הגנה מפני אנטי-ספאם לאדמינים
     if message.author.id == MY_USER_ID or message.author.guild_permissions.administrator:
         await bot.process_commands(message)
         return
 
-    now = datetime.now()
-    user_id = message.author.id
-    
+    # --- 🚨 מערכת ANTI-SPAM (הודעות רגילות) ---
     if user_id not in spam_tracker:
         spam_tracker[user_id] = []
         
     spam_tracker[user_id].append(now)
-    # משאירים רק הודעות מה-3 שניות האחרונות
     spam_tracker[user_id] = [t for t in spam_tracker[user_id] if now - t < timedelta(seconds=3)]
     
-    # הגבלה: מעל 5 הודעות ב-3 שניות = ספאם!
     if len(spam_tracker[user_id]) > 5:
-        spam_tracker[user_id] = [] # איפוס
+        spam_tracker[user_id] = []
         try:
             await message.channel.purge(limit=5, check=lambda m: m.author.id == user_id)
         except: pass
@@ -430,7 +472,6 @@ async def on_message(message: discord.Message):
         if mute_role:
             await message.author.add_roles(mute_role)
             
-        # תיעוד בבלוגים החסויים ובלוג האזהרות בפיירבייס
         warn_ch = message.guild.get_channel(CHANNELS["WARNS_LOG"])
         if warn_ch:
             emb = discord.Embed(title="🚨 מערכת אנטי-ספאם הופעלה!", color=0xff0000, timestamp=now)
@@ -443,7 +484,6 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
-# --- 🚨 איוונטים: כניסת משתמשים + מערכת ANTI-RAID ---
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user.name} באוויר ומוגן קומפלט ב-Railway!")
@@ -456,27 +496,22 @@ async def on_member_join(member: discord.Member):
     global raid_mode_active
     now = datetime.now()
     
-    # 1. מערכת ANTI-RAID (Join Flood)
     join_tracker.append(now)
-    # מסננים כניסות מעבר ל-10 שניות האחרונות
     globals()['join_tracker'] = [t for t in join_tracker if now - t < timedelta(seconds=10)]
     
-    # אם נכנסו יותר מ-8 אנשים ב-10 שניות = התקפת בוטים/רייד!
     if len(join_tracker) > 8 and not raid_mode_active:
         raid_mode_active = True
         log_ch = member.guild.get_channel(CHANNELS["OWNER_LOGS"])
         if log_ch:
             await log_ch.send("🚨 **מערכת ANTI-RAID הופעלה!** זוהה עומס כניסות חריג. חדר האימות ננעל זמנית להגנה!")
         
-        # נעילת חדר ה-Verify (ביטול הרשאת כתיבה/צפייה לכולם)
-        verify_ch = member.guild.get_channel(1501316672345211041) # חדר הוריפיי שלך
+        verify_ch = member.guild.get_channel(1501316672345211041)
         if verify_ch:
             overwrite = verify_ch.overwrites_for(member.guild.default_role)
             overwrite.send_messages = False
             overwrite.view_channel = False
             await verify_ch.set_permissions(member.guild.default_role, overwrite=overwrite)
 
-    # 2. מערכת אבטחה: זיהוי פרופילים חדשים (Anti-Alt)
     account_age = now - member.created_at.replace(tzinfo=None)
     if account_age < timedelta(days=10):
         alt_ch = member.guild.get_channel(CHANNELS["ANTI_ALT"])
@@ -486,7 +521,6 @@ async def on_member_join(member: discord.Member):
             emb_alt.add_field(name="וותק חשבון:", value=f"`{account_age.days}` ימים", inline=False)
             await alt_ch.send(embed=emb_alt)
 
-    # 3. מערכת מעקב הזמנות (Invites Tracker)
     welcome_ch = member.guild.get_channel(CHANNELS["WELCOME"])
     inviter_text = "לא נמצא (או Vanity URL)"
     try:
@@ -551,7 +585,7 @@ async def s_feedback(i: discord.Interaction):
     b = ui.Button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="f_open")
     b.callback = lambda inter: inter.response.send_modal(FeedbackModal())
     v.add_item(b)
-    await i.channel.send("📩 **פאנל פידבקים רשמי**", view=v)
+    await i.channel.send("📩 **פאנל פידבקים רשמי**\nלחצו על הכפתור למטה כדי להביע את דעתכם על השרת! ניתן לשלוח כאנונימי.", view=v)
     await i.response.send_message("✅ פאנל פידבקים הוקם!", ephemeral=True)
 
 @bot.tree.command(name="setup_verify", description="[מנהל/אונר] פאנל מערכת האימות.")
@@ -561,7 +595,6 @@ async def s_verify(i: discord.Interaction):
     await i.channel.send(embed=emb, view=VerifyView())
     await i.response.send_message("✅ פאנל אימות הוקם!", ephemeral=True)
 
-# פקודת אונר מיוחדת לכיבוי מצב רייד ידנית
 @bot.tree.command(name="unraid", description="[אונר בלבד] מכבה את מצב ה-Raid ופותח מחדש את חדר האימות.")
 async def unraid(i: discord.Interaction):
     global raid_mode_active
@@ -655,7 +688,6 @@ async def clear(i: discord.Interaction, amount: int):
     await i.channel.purge(limit=amount)
     await i.response.send_message(f"🧹 נמחקו בהצלחה `{amount}` הודעות!", ephemeral=True)
 
-# הרצת הבוט
 if __name__ == "__main__":
     if TOKEN: bot.run(TOKEN)
     else: print("❌ שגיאה: לא נמצא DISCORD_TOKEN.")
