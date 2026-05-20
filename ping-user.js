@@ -1,36 +1,19 @@
-const { SlashCommandBuilder } = require('discord.js');
+import asyncio
+import discord
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('ping-user')
-        .setDescription('לתייג חבר שלא עונה כדי להציק לו חחח')
-        .addUserOption(option => 
-            option.setName('target')
-                .setDescription('מי המשתמש שאתה רוצה לתייג?')
-                .setRequired(true))
-        .addIntegerOption(option =>
-            option.setName('amount')
-                .setDescription('כמה פעמים לתייג אותו? (מקסימום 10)')
-                .setRequired(true)),
-
-    async execute(interaction) {
-        const targetUser = interaction.options.getUser('target');
-        let amount = interaction.options.getInteger('amount');
-
-        // הגבלת כמות ל-10 כדי שדיסקורד לא יחסמו את הבוט על הצפה מהירה מדי (Rate Limit)
-        if (amount > 10) amount = 10;
-        if (amount < 1) amount = 1;
-
-        // הודעה פרטית רק לך שהבוט התחיל לעבוד
-        await interaction.reply({ content: `מתחיל לתייג את ${targetUser} כ-${amount} פעמים...`, ephemeral: true });
-
-        // לולאה שמבצעת את התיוגים
-        for (let i = 0; i < amount; i++) {
-            // שולח את התיוג בערוץ
-            await interaction.channel.send(`נוווו ענה כברררר ${targetUser} !!!`);
-            
-            // מחכה שנייה אחת (1000 מילישניות) בין תיוג לתיוג כדי שזה יעבוד חלק בלי חסימות
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-    },
-};
+# תוסיף את זה איפה שכל הפקודות שלך נמצאות בתוך main.py
+@tree.command(name="ping-user", description="לתייג חבר שלא עונה כדי להציק לו חחח")
+async def ping_user(interaction: discord.Interaction, target: discord.User, amount: int):
+    # הגבלת כמות כדי שלא יחסמו את הבוט
+    if amount > 10:
+        amount = 10
+    if amount < 1:
+        amount = 1
+        
+    # הודעה זמנית שרק אתה רואה
+    await interaction.response.send_message(f"מתחיל לתייג את {target.mention} כ-{amount} פעמים...", ephemeral=True)
+    
+    # הלולאה שעושה את העבודה
+    for i in range(amount):
+        await interaction.channel.send(f"נוווו ענה כברררר {target.mention} !!!")
+        await asyncio.sleep(1) # מחכה שנייה אחת בין תיוג לתיוג
