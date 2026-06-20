@@ -4,7 +4,7 @@ from discord.ext import commands, tasks
 import os
 import asyncio
 import random
-import re  # ייבוא בשביל זיהוי מדויק של קישורים
+import re
 from datetime import datetime, timedelta
 import firebase_admin
 from firebase_admin import credentials, db
@@ -418,18 +418,15 @@ async def on_message(message: discord.Message):
 
     # --- 🔒 מערכת ANTI-LINK (חסימת קישורים מוחלטת לכולם חוץ ממך) ---
     if user_id != MY_USER_ID:
-        # ביטוי רגולרי לזיהוי כל סוגי הקישורים וההזמנות לשרתים
         link_pattern = r"(https?://[^\s]+|discord\.gg/[^\s]+)"
         if re.search(link_pattern, message.content, re.IGNORECASE):
             try:
-                await message.delete()  # מחיקת הקישור המפוקפק
+                await message.delete()  
             except: pass
 
-            # 1. הוספת אזהרה רשמית למשתמש ב-Firebase
             current_warns = get_user_data(user_id, 'warns', 0) + 1
             set_user_data(user_id, 'warns', current_warns)
 
-            # 2. דיווח מיידי ואישי לערוץ ה-Owner החסוי שלך
             owner_ch = message.guild.get_channel(CHANNELS["OWNER_LOGS"])
             if owner_ch:
                 emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
@@ -439,7 +436,6 @@ async def on_message(message: discord.Message):
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
 
-            # 3. דיווח אוטומטי ללוג הציבורי + מתן מיוט באזהרה השלישית
             warn_ch = message.guild.get_channel(CHANNELS["WARNS_LOG"])
             if warn_ch:
                 await warn_ch.send(f"⚠️ **אזהרה אוטומטית** | המשתמש {message.author.mention} הוזהר על ידי מערכת האבטחה. סיבה: `פרסום קישורים אסור` (`{current_warns}/3`)")
@@ -448,9 +444,8 @@ async def on_message(message: discord.Message):
                 mute_role = message.guild.get_role(ROLES["MUTE"])
                 if mute_role: await message.author.add_roles(mute_role)
                 
-            return  # עוצר את ההודעה מלהמשיך הלאה או להפעיל פקודות
+            return  
 
-    # הגנה מפני אנטי-ספאם לאדמינים
     if message.author.id == MY_USER_ID or message.author.guild_permissions.administrator:
         await bot.process_commands(message)
         return
@@ -519,25 +514,66 @@ async def on_member_join(member: discord.Member):
             emb_alt = discord.Embed(title="🚨 התרעת משתמש חשוד (Anti-Alt)", color=0xffa500, timestamp=now)
             emb_alt.add_field(name="המשתמש:", value=f"{member.mention} (`{member.name}`)", inline=True)
             emb_alt.add_field(name="וותק חשבון:", value=f"`{account_age.days}` ימים", inline=False)
-            await alt_ch.send(embed=emb_alt)
+            await alt_ch.send(emb_alt)
 
+    # --- 🕒 מערכת בדיקת כניסה חוזרת (Rejoin Log) ---
+    left_at_str = get_user_data(member.id, 'left_at', 0)
+    if left_at_str != 0:
+        try:
+            left_at = datetime.fromisoformat(left_at_str)
+            duration = now - left_at
+            
+            time_parts = []
+            if duration.days > 0: time_parts.append(f"{duration.days} ימים")
+            hours = duration.seconds // 3600
+            if hours > 0: time_parts.append(f"{hours} שעות")
+            minutes = (duration.seconds % 3600) // 60
+            if minutes > 0: time_parts.append(f"{minutes} דקות")
+            seconds = duration.seconds % 60
+            if seconds > 0 or not time_parts: time_parts.append(f"{seconds} שניות")
+            time_str = ", ".join(time_parts)
+            
+            log_ch = member.guild.get_channel(1505637562633420870)
+            if log_ch:
+                await log_ch.send(f"ℹ️ המשתמש {member.mention} היה כבר בשרת ויצא לפני {time_str}")
+        except: pass
+
+    # --- 🎁 הודעת וולקאם מעוצבת ונקייה ---
     welcome_ch = member.guild.get_channel(CHANNELS["WELCOME"])
-    inviter_text = "לא נמצא (או Vanity URL)"
     try:
-        old_invites = bot.invites.get(member.guild.id, [])
         new_invites = await member.guild.invites()
         bot.invites[member.guild.id] = new_invites  
-        for invite in old_invites:
-            for new_invite in new_invites:
-                if invite.code == new_invite.code and new_invite.uses > invite.uses:
-                    inviter_text = f"{invite.inviter.mention}"
-                    break
     except: pass
 
     if welcome_ch and not raid_mode_active:
-        emb_welcome = discord.Embed(title="👋 ברוך הבא לשרת!", description=f"שלום {member.mention}, שמחים שהצטרפת אלינו!", color=0x00ff00, timestamp=now)
-        emb_welcome.add_field(name="🔗 הוזמן על ידי:", value=inviter_text, inline=True)
-        await welcome_ch.send(embed=emb_welcome)
+        emb_welcome = discord.Embed(
+            title="👋 ברוך הבא לשרת!", 
+            description=f"ברוך הבאה לשרת ספאמר הכי טוב בארץ מקווה שתהנו", 
+            color=0x00ff00, 
+            timestamp=now
+        )
+        emb_welcome.set_thumbnail(url=member.display_avatar.url)
+        await welcome_ch.send(embed=embed_welcome)
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    # שמירת זמן העזיבה של המשתמש בבסיס הנתונים לחישוב מדויק בחזרה שלו
+    set_user_data(member.id, 'left_at', datetime.now().isoformat())
+
+# --- 🚀 מערכת זיהוי ואירועי SERVER BOOST ---
+@bot.event
+async def on_member_update(before, after):
+    if before.premium_since is None and after.premium_since is not None:
+        channel = after.guild.get_channel(CHANNELS["WELCOME"])
+        if channel:
+            embed = discord.Embed(
+                title="🚀 בוסט חדש לשרת!",
+                description=f"תודה! **{after.name}** על הבוסט!\n\n**חבר:**\n{after.mention}",
+                color=discord.Color.from_rgb(230, 28, 186), 
+                timestamp=datetime.now()
+            )
+            embed.set_footer(text="תודה על התמיכה!!")
+            await channel.send(content=after.mention, embed=embed)
 
 
 # ==========================================
@@ -546,7 +582,7 @@ async def on_member_join(member: discord.Member):
 @bot.tree.command(name="setup_shop", description="[מנהל/אונר] מקים את פאנל החנות.")
 async def s_shop(i: discord.Interaction):
     if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_shop")
-    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהל את הבנק שלך, צา לעבוד ורכוש הטבות ורולים מיוחדים!", color=0x2b2d31)
+    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהל את הבנק שלך, צא לעבוד ורכוש הטבות ורולים מיוחדים!", color=0x2b2d31)
     await i.channel.send(embed=emb, view=ShopView())
     await i.response.send_message("✅ פאנל חנות הוקם!", ephemeral=True)
 
