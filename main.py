@@ -432,8 +432,8 @@ async def on_message(message: discord.Message):
                 emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
                 emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
                 emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
-                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```{message.content}
-```", inline=False)
+                # 🛡️ כאן תוקנה השגיאה של ה-f-string בהצלחה!
+                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n```", inline=False)
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
 
@@ -519,9 +519,7 @@ async def on_member_join(member: discord.Member):
             if not alt_ch: alt_ch = await bot.fetch_channel(CHANNELS["ANTI_ALT"])
                 
             if alt_ch:
-                # כותרת ועיצוב נקי לפי התמונה המצורפת
                 emb_alt = discord.Embed(title="התרעת משתמש חשוד (Anti-Alt) 🚨", color=0xffa500, timestamp=datetime.now())
-                # inline=False דואג שהערכים יישבו בדיוק מתחת לכותרת השדה
                 emb_alt.add_field(name="המשתמש:", value=f"{member.mention}\n({member.name})", inline=False)
                 emb_alt.add_field(name="וותק חשבון:", value=f"{account_age.days} ימים", inline=False)
                 
@@ -661,15 +659,11 @@ async def unraid(i: discord.Interaction):
 # --- 7. פקודות מודרציה, ניהול וכלכלה ---
 # ==========================================
 
-# 🆕 פקודה חדשה לבדיקת וותק של כל חשבון (לפי בקשתך!)
 @bot.tree.command(name="account_age", description="[כללי] בודק לפני כמה ימים נוצר החשבון של המשתמש.")
 async def account_age_cmd(i: discord.Interaction, member: discord.Member = None):
-    # אם לא תייגת אף אחד, הוא יבדוק עליך
     target_member = member or i.user
-    
     now_utc = datetime.now(target_member.created_at.tzinfo)
     diff = now_utc - target_member.created_at
-    
     await i.response.send_message(f"📅 החשבון של {target_member.mention} נוצר לפני **{diff.days:,}** ימים!")
 
 @bot.tree.command(name="pay", description="[כללי] העבר סכום כסף מחשבונך האישי ישירות לחשבון של חבר.")
