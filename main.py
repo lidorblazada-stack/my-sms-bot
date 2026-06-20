@@ -26,7 +26,8 @@ CHANNELS = {
     "REPORTS": 1505636914588287006,         
     "ANTI_ALT": 1505637562633420870,        
     "OWNER_LOGS": 1505637562633420870,      
-    "WARNS_LOG": 1502014872655888554        
+    "WARNS_LOG": 1502014872655888554,
+    "BOOST": 1505632369674158241             # <-- הצאט החדש שהגדרת לבוסטים
 }
 
 ROLES = {
@@ -557,14 +558,13 @@ async def on_member_join(member: discord.Member):
 
 @bot.event
 async def on_member_remove(member: discord.Member):
-    # שמירת זמן העזיבה של המשתמש בבסיס הנתונים לחישוב מדויק בחזרה שלו
     set_user_data(member.id, 'left_at', datetime.now().isoformat())
 
 # --- 🚀 מערכת זיהוי ואירועי SERVER BOOST ---
 @bot.event
 async def on_member_update(before, after):
     if before.premium_since is None and after.premium_since is not None:
-        channel = after.guild.get_channel(CHANNELS["WELCOME"])
+        channel = after.guild.get_channel(CHANNELS["BOOST"]) # <-- שונה בהצלחה לחדר הבוסטים החדש
         if channel:
             embed = discord.Embed(
                 title="🚀 בוסט חדש לשרת!",
