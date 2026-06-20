@@ -27,7 +27,7 @@ CHANNELS = {
     "ANTI_ALT": 1505637562633420870,        
     "OWNER_LOGS": 1505637562633420870,      
     "WARNS_LOG": 1502014872655888554,
-    "BOOST": 1505632369674158241             # <-- הצאט החדש שהגדרת לבוסטים
+    "BOOST": 1505632369674158241             
 }
 
 ROLES = {
@@ -417,12 +417,11 @@ async def on_message(message: discord.Message):
     now = datetime.now()
     user_id = message.author.id
 
-    # --- 🔒 מערכת ANTI-LINK (חסימת קישורים מוחלטת לכולם חוץ ממך) ---
+    # --- 🔒 מערכת ANTI-LINK ---
     if user_id != MY_USER_ID:
         link_pattern = r"(https?://[^\s]+|discord\.gg/[^\s]+)"
         if re.search(link_pattern, message.content, re.IGNORECASE):
-            try:
-                await message.delete()  
+            try: await message.delete()  
             except: pass
 
             current_warns = get_user_data(user_id, 'warns', 0) + 1
@@ -433,7 +432,8 @@ async def on_message(message: discord.Message):
                 emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
                 emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
                 emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
-                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```{message.content}```", inline=False)
+                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```{message.content}
+```", inline=False)
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
 
@@ -451,22 +451,18 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    # --- 🚨 מערכת ANTI-SPAM (הודעות רגילות) ---
-    if user_id not in spam_tracker:
-        spam_tracker[user_id] = []
-        
+    # --- 🚨 מערכת ANTI-SPAM ---
+    if user_id not in spam_tracker: spam_tracker[user_id] = []
     spam_tracker[user_id].append(now)
     spam_tracker[user_id] = [t for t in spam_tracker[user_id] if now - t < timedelta(seconds=3)]
     
     if len(spam_tracker[user_id]) > 5:
         spam_tracker[user_id] = []
-        try:
-            await message.channel.purge(limit=5, check=lambda m: m.author.id == user_id)
+        try: await message.channel.purge(limit=5, check=lambda m: m.author.id == user_id)
         except: pass
         
         mute_role = message.guild.get_role(ROLES["MUTE"])
-        if mute_role:
-            await message.author.add_roles(mute_role)
+        if mute_role: await message.author.add_roles(mute_role)
             
         warn_ch = message.guild.get_channel(CHANNELS["WARNS_LOG"])
         if warn_ch:
@@ -498,6 +494,9 @@ async def on_member_join(member: discord.Member):
     if len(join_tracker) > 8 and not raid_mode_active:
         raid_mode_active = True
         log_ch = member.guild.get_channel(CHANNELS["OWNER_LOGS"])
+        if not log_ch:
+            try: log_ch = await bot.fetch_channel(CHANNELS["OWNER_LOGS"])
+            except: pass
         if log_ch:
             await log_ch.send("🚨 **מערכת ANTI-RAID הופעלה!** זוהה עומס כניסות חריג. חדר האימות ננעל זמנית להגנה!")
         
@@ -508,14 +507,30 @@ async def on_member_join(member: discord.Member):
             overwrite.view_channel = False
             await verify_ch.set_permissions(member.guild.default_role, overwrite=overwrite)
 
-    account_age = now - member.created_at.replace(tzinfo=None)
-    if account_age < timedelta(days=10):
-        alt_ch = member.guild.get_channel(CHANNELS["ANTI_ALT"])
-        if alt_ch:
-            emb_alt = discord.Embed(title="🚨 התרעת משתמש חשוד (Anti-Alt)", color=0xffa500, timestamp=now)
-            emb_alt.add_field(name="המשתמש:", value=f"{member.mention} (`{member.name}`)", inline=True)
-            emb_alt.add_field(name="וותק חשבון:", value=f"`{account_age.days}` ימים", inline=False)
-            await alt_ch.send(emb_alt)
+    # --- 🚨 מערכת ANTI-ALT - מותאמת במדויק לקובץ image.png ---
+    try:
+        now_utc = datetime.now(member.created_at.tzinfo)
+        account_age = now_utc - member.created_at
+        
+        print(f"🔍 [Anti-Alt Check] משתמש נכנס: {member.name} | וותק: {account_age.days} ימים")
+        
+        if account_age < timedelta(days=10):
+            alt_ch = member.guild.get_channel(CHANNELS["ANTI_ALT"])
+            if not alt_ch: alt_ch = await bot.fetch_channel(CHANNELS["ANTI_ALT"])
+                
+            if alt_ch:
+                # כותרת ועיצוב נקי לפי התמונה המצורפת
+                emb_alt = discord.Embed(title="התרעת משתמש חשוד (Anti-Alt) 🚨", color=0xffa500, timestamp=datetime.now())
+                # inline=False דואג שהערכים יישבו בדיוק מתחת לכותרת השדה
+                emb_alt.add_field(name="המשתמש:", value=f"{member.mention}\n({member.name})", inline=False)
+                emb_alt.add_field(name="וותק חשבון:", value=f"{account_age.days} ימים", inline=False)
+                
+                await alt_ch.send(embed=emb_alt)
+                print(f"✅ [Anti-Alt Log] אימבד אלט נשלח בהצלחה לחדר עבור {member.name}")
+            else:
+                print(f"❌ [Anti-Alt Log] שגיאה: לא נמצא ערוץ אלט תקני!")
+    except Exception as e:
+        print(f"❌ [Anti-Alt Error] קריסה במערכת זיהוי אלט: {e}")
 
     # --- 🕒 מערכת בדיקת כניסה חוזרת (Rejoin Log) ---
     left_at_str = get_user_data(member.id, 'left_at', 0)
@@ -523,7 +538,6 @@ async def on_member_join(member: discord.Member):
         try:
             left_at = datetime.fromisoformat(left_at_str)
             duration = now - left_at
-            
             time_parts = []
             if duration.days > 0: time_parts.append(f"{duration.days} ימים")
             hours = duration.seconds // 3600
@@ -535,24 +549,25 @@ async def on_member_join(member: discord.Member):
             time_str = ", ".join(time_parts)
             
             log_ch = member.guild.get_channel(1505637562633420870)
+            if not log_ch:
+                try: log_ch = await bot.fetch_channel(1505637562633420870)
+                except: pass
             if log_ch:
                 await log_ch.send(f"ℹ️ המשתמש {member.mention} היה כבר בשרת ויצא לפני {time_str}")
         except: pass
 
-    # --- 🎁 הודעת וולקאם מעוצבת ונקייה ---
+    # --- 🎁 הודעת וולקאם ---
     welcome_ch = member.guild.get_channel(CHANNELS["WELCOME"])
+    if not welcome_ch:
+        try: welcome_ch = await bot.fetch_channel(CHANNELS["WELCOME"])
+        except: pass
     try:
         new_invites = await member.guild.invites()
         bot.invites[member.guild.id] = new_invites  
     except: pass
 
     if welcome_ch and not raid_mode_active:
-        emb_welcome = discord.Embed(
-            title="👋 ברוך הבא לשרת!", 
-            description=f"ברוך הבאה לשרת ספאמר הכי טוב בארץ מקווה שתהנו", 
-            color=0x00ff00, 
-            timestamp=now
-        )
+        emb_welcome = discord.Embed(title="👋 ברוך הבא לשרת!", description=f"ברוך הבאה לשרת ספאמר הכי טוב בארץ מקווה שתהנו", color=0x00ff00, timestamp=now)
         emb_welcome.set_thumbnail(url=member.display_avatar.url)
         await welcome_ch.send(embed=emb_welcome)
 
@@ -560,18 +575,15 @@ async def on_member_join(member: discord.Member):
 async def on_member_remove(member: discord.Member):
     set_user_data(member.id, 'left_at', datetime.now().isoformat())
 
-# --- 🚀 מערכת זיהוי ואירועי SERVER BOOST ---
 @bot.event
 async def on_member_update(before, after):
     if before.premium_since is None and after.premium_since is not None:
-        channel = after.guild.get_channel(CHANNELS["BOOST"]) # <-- שונה בהצלחה לחדר הבוסטים החדש
+        channel = after.guild.get_channel(CHANNELS["BOOST"])
+        if not channel:
+            try: channel = await bot.fetch_channel(CHANNELS["BOOST"])
+            except: pass
         if channel:
-            embed = discord.Embed(
-                title="🚀 בוסט חדש לשרת!",
-                description=f"תודה! **{after.name}** על הבוסט!\n\n**חבר:**\n{after.mention}",
-                color=discord.Color.from_rgb(230, 28, 186), 
-                timestamp=datetime.now()
-            )
+            embed = discord.Embed(title="🚀 בוסט חדש לשרת!", description=f"תודה! **{after.name}** על הבוסט!\n\n**חבר:**\n{after.mention}", color=discord.Color.from_rgb(230, 28, 186), timestamp=datetime.now())
             embed.set_footer(text="תודה על התמיכה!!")
             await channel.send(content=after.mention, embed=embed)
 
@@ -602,7 +614,7 @@ async def s_heist(i: discord.Interaction):
     await i.channel.send(embed=emb, view=HeistView())
     await i.response.send_message("✅ פאנל שודים הוקם בהצלחה!", ephemeral=True)
 
-@bot.tree.command(name="setup_tickets", description="[מנהל/אונר] פאנל דיווחים והצעות במרכז המאוחד.")
+@bot.tree.command(name="setup_tickets", description="[מנהל/אונר] פאנל דיווחים והצעות.")
 async def s_tickets(i: discord.Interaction):
     if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_tickets")
     v = ui.View(timeout=None)
@@ -621,7 +633,7 @@ async def s_feedback(i: discord.Interaction):
     b = ui.Button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="f_open")
     b.callback = lambda inter: inter.response.send_modal(FeedbackModal())
     v.add_item(b)
-    await i.channel.send("📩 **פאנל פידבקים רשמי**\nלחצו על הכפתור למטה כדי להביע את דעתכם על השרת! ניתן לשלוח כאנונימי.", view=v)
+    await i.channel.send("📩 **פאנל פידבקים רשמי**\nלחצו על הכפתור למטה כדי להביע את דעתכם על השרת!", view=v)
     await i.response.send_message("✅ פאנל פידבקים הוקם!", ephemeral=True)
 
 @bot.tree.command(name="setup_verify", description="[מנהל/אונר] פאנל מערכת האימות.")
@@ -631,7 +643,7 @@ async def s_verify(i: discord.Interaction):
     await i.channel.send(embed=emb, view=VerifyView())
     await i.response.send_message("✅ פאנל אימות הוקם!", ephemeral=True)
 
-@bot.tree.command(name="unraid", description="[אונר בלבד] מכבה את מצב ה-Raid ופותח מחדש את חדר האימות.")
+@bot.tree.command(name="unraid", description="[אונר בלבד] מכבה את מצב ה-Raid.")
 async def unraid(i: discord.Interaction):
     global raid_mode_active
     if i.user.id != MY_USER_ID: return await send_unauthorized_alert(i, "unraid")
@@ -648,6 +660,18 @@ async def unraid(i: discord.Interaction):
 # ==========================================
 # --- 7. פקודות מודרציה, ניהול וכלכלה ---
 # ==========================================
+
+# 🆕 פקודה חדשה לבדיקת וותק של כל חשבון (לפי בקשתך!)
+@bot.tree.command(name="account_age", description="[כללי] בודק לפני כמה ימים נוצר החשבון של המשתמש.")
+async def account_age_cmd(i: discord.Interaction, member: discord.Member = None):
+    # אם לא תייגת אף אחד, הוא יבדוק עליך
+    target_member = member or i.user
+    
+    now_utc = datetime.now(target_member.created_at.tzinfo)
+    diff = now_utc - target_member.created_at
+    
+    await i.response.send_message(f"📅 החשבון של {target_member.mention} נוצר לפני **{diff.days:,}** ימים!")
+
 @bot.tree.command(name="pay", description="[כללי] העבר סכום כסף מחשבונך האישי ישירות לחשבון של חבר.")
 async def pay(i: discord.Interaction, to: discord.Member, amount: int):
     if amount <= 0: return await i.response.send_message("❌ נא להזין סכום תקין הגבוה מ-0.", ephemeral=True)
@@ -671,7 +695,7 @@ async def jail_remove(i: discord.Interaction, member: discord.Member):
         await i.response.send_message(f"✅ 🔓 המשתמש {member.mention} שוחרר מהכלא.")
     else: await i.response.send_message("❌ המשתמש אינו בכלא.", ephemeral=True)
 
-@bot.tree.command(name="warn", description="[מנהל/אונר] נותן אזהרה למשתמש. באזהרה השלישית הוא מקבל מיוט.")
+@bot.tree.command(name="warn", description="[מנהל/אונר] נותן אזהרה למשתמש.")
 async def warn(i: discord.Interaction, member: discord.Member, reason: str):
     if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "warn")
     current_warns = get_user_data(member.id, 'warns', 0) + 1
