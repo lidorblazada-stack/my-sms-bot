@@ -219,6 +219,11 @@ class VerifyView(ui.View):
         
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
     async def verify_user(self, i: discord.Interaction, b: ui.Button):
+        # בדיקה האם המשתמש נמצא בשרת החובה
+        required_guild = i.client.get_guild(1331713437151039578)
+        if required_guild is None or required_guild.get_member(i.user.id) is None:
+            return await i.response.send_message("❌ בשביל להתאמת אתה חייב להיות בשרת הבא:\nhttps://discord.gg/ptxgJ7xher", ephemeral=True)
+
         role = i.guild.get_role(ROLES["VERIFIED"])
         if role in i.user.roles: 
             return await i.response.send_message("❌ אתה כבר מאומת בשרת!", ephemeral=True)
