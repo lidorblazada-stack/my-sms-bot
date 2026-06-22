@@ -219,37 +219,26 @@ class VerifyView(ui.View):
         
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
     async def verify_user(self, i: discord.Interaction, b: ui.Button):
-        # מניעת קריסה מוקדמת ומתן זמן עיבוד קצר לבוט
-        await i.response.defer(ephemeral=True)
+        # בדיקה האם המשתמש נמצא בשרת הספציפי שצוין
+        target_guild = i.client.get_guild(1229413233815912448)  # מבוסס על השרת המקורי שלך
+        if target_guild is None:
+            # אם הבוט לא קורא את השרת מהמטמון, ננסה להביא אותו מה-API
+            try:
+                target_guild = await i.client.fetch_guild(1229413233815912448)
+            except:
+                pass
+
+        if target_guild:
+            member_in_target = target_guild.get_member(i.user.id)
+            if member_in_target is None:
+                # אם המשתמש לא נמצא בשרת ההוא
+                return await i.response.send_message("❌ בשביל להתאמת כאן, אתה חייב להיות קודם כל בשרת הראשי שלנו!\n🔗 היכנס לכאן ולאחר מכן נסה שוב: https://discord.gg/ptxgJ7xher", ephemeral=True)
         
-        required_guild = i.client.get_guild(1331713437151039578)
-        if required_guild is None:
-            return await i.followup.send("❌ שגיאה: הבוט אינו נמצא בשרת הדרוש לאימות או שאין לו גישה אליו.", ephemeral=True)
-
-        try:
-            # בדיקת Fetch חיה מול השרת
-            await required_guild.fetch_member(i.user.id)
-        except discord.NotFound:
-            # אם המשתמש לא בשרת - נציג לו את ההודעה המעודכנת
-            return await i.followup.send("על מנת לקבל את כל האינטרקציות בשרת עליך להיות בשרת גיבוי\nhttps://discord.gg/ptxgJ7xher", ephemeral=True)
-        except discord.Forbidden:
-            return await i.followup.send("❌ שגיאה: לבוט אין הרשאות מתאימות (Members Intent) לבדוק משתמשים בשרת המבוקש.", ephemeral=True)
-        except Exception as e:
-            return await i.followup.send(f"❌ שגיאה בלתי צפויה בעת הבדיקה: {e}", ephemeral=True)
-
-        # כאן מגיעים אם המשתמש כן נמצא בשרת (הבדיקה עברה בהצלחה ללא שגיאת NotFound)
         role = i.guild.get_role(ROLES["VERIFIED"])
-        if role is None:
-            return await i.followup.send("❌ שגיאה: רול האימות לא נמצא בשרת, אנא פנה למנהל.", ephemeral=True)
-            
         if role in i.user.roles: 
-            return await i.followup.send("❌ אתה כבר מאומת בשרת!", ephemeral=True)
-            
-        try:
-            await i.user.add_roles(role)
-            await i.followup.send("🎉 אומתת בהצלחה! ברוך הבא לשרת.", ephemeral=True)
-        except discord.Forbidden:
-            await i.followup.send("❌ שגיאה: הרול של הבוט נמצא מתחת לרול האימות, לכן אין לו סמכות להביא לך אותו.", ephemeral=True)
+            return await i.response.send_message("❌ אתה כבר מאומת בשרת!", ephemeral=True)
+        await i.user.add_roles(role)
+        await i.response.send_message("🎉 אומתת בהצלחה! ברוך הבא לשרת.", ephemeral=True)
 
 class ShopView(ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -458,8 +447,8 @@ async def on_message(message: discord.Message):
                 emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
                 emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
                 emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
-                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n
-```", inline=False)
+                # 🛡️ כאן תוקנה השגיאה של ה-f-string בהצלחה!
+                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n```", inline=False)
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
 
@@ -618,7 +607,7 @@ async def on_member_update(before, after):
 @bot.tree.command(name="setup_shop", description="[מנהל/אונר] מקים את פאנל החנות.")
 async def s_shop(i: discord.Interaction):
     if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_shop")
-    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהל את הבנק שלך, צא לעבוד ורכוש הטבות ורולים מיוחדים!", color=0x2b2d31)
+    emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהר את הבנק שלך, צא לעבוד ורכוש הטבות ורולים מיוחדים!", color=0x2b2d31)
     await i.channel.send(embed=emb, view=ShopView())
     await i.response.send_message("✅ פאנל חנות הוקם!", ephemeral=True)
 
