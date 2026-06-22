@@ -219,20 +219,24 @@ class VerifyView(ui.View):
         
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
     async def verify_user(self, i: discord.Interaction, b: ui.Button):
-        # בדיקה האם המשתמש נמצא בשרת הספציפי שצוין
-        target_guild = i.client.get_guild(1229413233815912448)  # מבוסס על השרת המקורי שלך
-        if target_guild is None:
-            # אם הבוט לא קורא את השרת מהמטמון, ננסה להביא אותו מה-API
-            try:
-                target_guild = await i.client.fetch_guild(1229413233815912448)
-            except:
-                pass
+        try:
+            target_guild = i.client.get_guild(1229413233815912448)
+            if target_guild is None:
+                try: target_guild = await i.client.fetch_guild(1229413233815912448)
+                except: pass
 
-        if target_guild:
-            member_in_target = target_guild.get_member(i.user.id)
-            if member_in_target is None:
-                # אם המשתמש לא נמצא בשרת ההוא
-                return await i.response.send_message("❌ בשביל להתאמת כאן, אתה חייב להיות קודם כל בשרת הראשי שלנו!\n🔗 היכנס לכאן ולאחר מכן נסה שוב: https://discord.gg/ptxgJ7xher", ephemeral=True)
+            if target_guild:
+                try:
+                    member_in_target = target_guild.get_member(i.user.id)
+                    if member_in_target is None:
+                        member_in_target = await target_guild.fetch_member(i.user.id)
+                except:
+                    member_in_target = None
+
+                if member_in_target is None:
+                    return await i.response.send_message("❌ בשביל להתאמת כאן, אתה חייב להיות קודם כל בשרת הראשי שלנו!\n🔗 היכנס לכאן ולאחר מכן נסה שוב: https://discord.gg/ptxgJ7xher", ephemeral=True)
+        except Exception as e:
+            print(f"⚠️ שגיאה בבדיקת שרת חיצוני: {e}")
         
         role = i.guild.get_role(ROLES["VERIFIED"])
         if role in i.user.roles: 
@@ -447,7 +451,6 @@ async def on_message(message: discord.Message):
                 emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
                 emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
                 emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
-                # 🛡️ כאן תוקנה השגיאה של ה-f-string בהצלחה!
                 emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n```", inline=False)
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
@@ -500,11 +503,11 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    global raid_mode_active
+    global raid_mode_active, join_tracker  # תיקון שגיאת המשתנה הגלובלי
     now = datetime.now()
     
     join_tracker.append(now)
-    globals()['join_tracker'] = [t for t in join_tracker if now - t < timedelta(seconds=10)]
+    join_tracker = [t for t in join_tracker if now - t < timedelta(seconds=10)]
     
     if len(join_tracker) > 8 and not raid_mode_active:
         raid_mode_active = True
@@ -522,7 +525,7 @@ async def on_member_join(member: discord.Member):
             overwrite.view_channel = False
             await verify_ch.set_permissions(member.guild.default_role, overwrite=overwrite)
 
-    # --- 🚨 מערכת ANTI-ALT - מותאמת במדויק לקובץ image.png ---
+    # --- 🚨 מערכת ANTI-ALT ---
     try:
         now_utc = datetime.now(member.created_at.tzinfo)
         account_age = now_utc - member.created_at
@@ -733,30 +736,4 @@ async def mute(i: discord.Interaction, member: discord.Member, reason: str):
 
 @bot.tree.command(name="unmute", description="[מנהל/אונר] מסיר רול השתקה.")
 async def unmute(i: discord.Interaction, member: discord.Member):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "unmute")
-    role = i.guild.get_role(ROLES["MUTE"])
-    if role: await member.remove_roles(role)
-    await i.response.send_message(f"🔊 {member.mention} שוחרר מההשתקה.")
-
-@bot.tree.command(name="kick", description="[מנהל/אונר] מגרש משתמש מהשרת.")
-async def kick(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "kick")
-    await member.kick(reason=reason)
-    await i.response.send_message(f"👞 המשתמש `{member.name}` הועף מהשרת. סיבה: `{reason}`")
-
-@bot.tree.command(name="ban", description="[מנהל/אונר] חוסם משתמש מהשרת.")
-async def ban(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "ban")
-    await member.ban(reason=reason)
-    await i.response.send_message(f"🚫 המשתמש `{member.name}` נחסם מהשרת. סיבה: `{reason}`")
-
-@bot.tree.command(name="clear", description="[מנהל/אונר] מוחק הודעות מהערוץ הנוכחי.")
-async def clear(i: discord.Interaction, amount: int):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "clear")
-    if amount <= 0: return await i.response.send_message("❌ הזן מספר תקין.", ephemeral=True)
-    await i.channel.purge(limit=amount)
-    await i.response.send_message(f"🧹 נמחקו בהצלחה `{amount}` הודעות!", ephemeral=True)
-
-if __name__ == "__main__":
-    if TOKEN: bot.run(TOKEN)
-    else: print("❌ שגיאה: לא נמצא DISCORD_TOKEN.")
+    if not has_owner_or_admin_permission(i): return await send
