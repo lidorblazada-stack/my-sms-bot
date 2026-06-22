@@ -219,10 +219,20 @@ class VerifyView(ui.View):
         
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
     async def verify_user(self, i: discord.Interaction, b: ui.Button):
-        # בדיקה האם המשתמש נמצא בשרת החובה
+        # משיכת השרת הדרוש בצורה תקינה
         required_guild = i.client.get_guild(1331713437151039578)
-        if required_guild is None or required_guild.get_member(i.user.id) is None:
+        
+        if required_guild is None:
+            return await i.response.send_message("❌ שגיאה: הבוט אינו נמצא בשרת האימות המבוקש.", ephemeral=True)
+
+        # בדיקה חיה בזמן אמת (Fetch) מול השרת כדי לוודא שאתה בפנים ללא תקלות קאש
+        try:
+            await required_guild.fetch_member(i.user.id)
+        except discord.NotFound:
+            # אם המשתמש לא נמצא בשרת, נשלח לו את הודעת החסימה עם הקישור
             return await i.response.send_message("❌ בשביל להתאמת אתה חייב להיות בשרת הבא:\nhttps://discord.gg/ptxgJ7xher", ephemeral=True)
+        except Exception as e:
+            return await i.response.send_message(f"❌ שגיאה זמנית בבדיקת השרת: {e}", ephemeral=True)
 
         role = i.guild.get_role(ROLES["VERIFIED"])
         if role in i.user.roles: 
@@ -437,8 +447,8 @@ async def on_message(message: discord.Message):
                 emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
                 emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
                 emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
-                # 🛡️ כאן תוקנה השגיאה של ה-f-string בהצלחה!
-                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n```", inline=False)
+                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n
+```", inline=False)
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
 
