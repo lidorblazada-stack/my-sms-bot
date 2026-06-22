@@ -215,32 +215,50 @@ class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
 # --- 4. פאנלים קבועים ומערכת כפתורים ---
 # ==========================================
 class VerifyView(ui.View):
-    def __init__(self): super().__init__(timeout=None)
+    def __init__(self): 
+        super().__init__(timeout=None)
         
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
     async def verify_user(self, i: discord.Interaction, b: ui.Button):
-        try:
-            target_guild = i.client.get_guild(1229413233815912448)
-            if target_guild is None:
-                try: target_guild = await i.client.fetch_guild(1229413233815912448)
-                except: pass
-
-            if target_guild:
-                try:
-                    member_in_target = target_guild.get_member(i.user.id)
-                    if member_in_target is None:
-                        member_in_target = await target_guild.fetch_member(i.user.id)
-                except:
-                    member_in_target = None
-
-                if member_in_target is None:
-                    return await i.response.send_message("❌ בשביל להתאמת כאן, אתה חייב להיות קודם כל בשרת הראשי שלנו!\n🔗 היכנס לכאן ולאחר מכן נסה שוב: https://discord.gg/ptxgJ7xher", ephemeral=True)
-        except Exception as e:
-            print(f"⚠️ שגיאה בבדיקת שרת חיצוני: {e}")
-        
         role = i.guild.get_role(ROLES["VERIFIED"])
         if role in i.user.roles: 
             return await i.response.send_message("❌ אתה כבר מאומת בשרת!", ephemeral=True)
+
+        target_guild_id = 1229413233815912448
+        is_member_found = False
+
+        try:
+            target_guild = i.client.get_guild(target_guild_id)
+            if target_guild is None:
+                try: 
+                    target_guild = await i.client.fetch_guild(target_guild_id)
+                except Exception as e:
+                    print(f"⚠️ שגיאה בשליפת השרת החיצוני: {e}")
+
+            if target_guild:
+                try:
+                    # ניסיון למצוא את המשתמש ישירות מדיסקורד (עוקף את בעיות הקאש)
+                    member_in_target = await target_guild.fetch_member(i.user.id)
+                    if member_in_target:
+                        is_member_found = True
+                except discord.NotFound:
+                    is_member_found = False
+                except Exception as e:
+                    print(f"⚠️ שגיאה בבדיקת חבר בשרת החיצוני: {e}")
+                    is_member_found = False
+        except Exception as e:
+            print(f"⚠️ שגיאה כללית במערכת האימות החיצונית: {e}")
+            is_member_found = False
+
+        # חסימה מוחלטת: אם הוא לא נמצא בשרת השני (או שיש שגיאה), המערכת עוצרת כאן!
+        if not is_member_found:
+            return await i.response.send_message(
+                "❌ בשביל להתאמת כאן, אתה חייב להיות קודם כל בשרת הראשי שלנו!\n"
+                "🔗 היכנס לכאן ולאחר מכן נסה שוב: https://discord.gg/ptxgJ7xher", 
+                ephemeral=True
+            )
+        
+        # מתן הרול רק במידה והבדיקה עברה בהצלחה והמשתמש נמצא
         await i.user.add_roles(role)
         await i.response.send_message("🎉 אומתת בהצלחה! ברוך הבא לשרת.", ephemeral=True)
 
@@ -503,7 +521,7 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    global raid_mode_active, join_tracker  # תיקון שגיאת המשתנה הגלובלי
+    global raid_mode_active, join_tracker  
     now = datetime.now()
     
     join_tracker.append(now)
@@ -677,7 +695,7 @@ async def unraid(i: discord.Interaction):
 # --- 7. פקודות מודרציה, ניהול וכלכלה ---
 # ==========================================
 
-@bot.tree.command(name="account_age", description="[כללי] בודק לפני כמה ימים נוצר החשבון של המשתמש.")
+@bot.tree.command(name="account_age", description="[כללי] בודק לפני כמה ימים נוצר החשןן של המשתמש.")
 async def account_age_cmd(i: discord.Interaction, member: discord.Member = None):
     target_member = member or i.user
     now_utc = datetime.now(target_member.created_at.tzinfo)
@@ -701,39 +719,4 @@ async def jail_add(i: discord.Interaction, member: discord.Member):
 
 @bot.tree.command(name="jail_remove", description="[צוות כלא/מנהל/אונר] משחרר משתמש מהכלא.")
 async def jail_remove(i: discord.Interaction, member: discord.Member):
-    if not is_owner_or_jail_staff(i): return await send_unauthorized_alert(i, "jail_remove", "צוות כלא / מנהל / אונר")
-    if member.id in get_jail_list_from_db(): 
-        remove_from_jail_db(member.id)
-        await i.response.send_message(f"✅ 🔓 המשתמש {member.mention} שוחרר מהכלא.")
-    else: await i.response.send_message("❌ המשתמש אינו בכלא.", ephemeral=True)
-
-@bot.tree.command(name="warn", description="[מנהל/אונר] נותן אזהרה למשתמש.")
-async def warn(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "warn")
-    current_warns = get_user_data(member.id, 'warns', 0) + 1
-    set_user_data(member.id, 'warns', current_warns)
-    log = i.guild.get_channel(CHANNELS["WARNS_LOG"])
-    if log: await log.send(f"⚠️ **אזהרה** | {member.mention} הוזהר על ידי {i.user.mention}. סיבה: `{reason}` (`{current_warns}/3`)")
-    if current_warns >= 3: 
-        role = i.guild.get_role(ROLES["MUTE"])
-        if role: await member.add_roles(role)
-    await i.response.send_message(f"✅ האזהרה נרשמה ({current_warns}/3).", ephemeral=True)
-
-@bot.tree.command(name="unwarn", description="[מנהל/אונר] מוריד אזהרה אחת למשתמש.")
-async def unwarn(i: discord.Interaction, member: discord.Member):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "unwarn")
-    current_warns = get_user_data(member.id, 'warns', 0)
-    if current_warns <= 0: return await i.response.send_message("❌ למשתמש אין אזהרות.", ephemeral=True)
-    set_user_data(member.id, 'warns', current_warns - 1)
-    await i.response.send_message(f"✅ הורדה אזהרה. מצבו הנוכחי: `{current_warns - 1}/3`", ephemeral=True)
-
-@bot.tree.command(name="mute", description="[מנהל/אונר] מקצה רול השתקה (Mute) למשתמש.")
-async def mute(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "mute")
-    role = i.guild.get_role(ROLES["MUTE"])
-    if role: await member.add_roles(role)
-    await i.response.send_message(f"🚫 {member.mention} הושתק. סיבה: `{reason}`")
-
-@bot.tree.command(name="unmute", description="[מנהל/אונר] מסיר רול השתקה.")
-async def unmute(i: discord.Interaction, member: discord.Member):
-    if not has_owner_or_admin_permission(i): return await send
+    if
