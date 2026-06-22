@@ -237,7 +237,6 @@ class VerifyView(ui.View):
 
             if target_guild:
                 try:
-                    # ניסיון למצוא את המשתמש ישירות מדיסקורד (עוקף את בעיות הקאש)
                     member_in_target = await target_guild.fetch_member(i.user.id)
                     if member_in_target:
                         is_member_found = True
@@ -250,7 +249,6 @@ class VerifyView(ui.View):
             print(f"⚠️ שגיאה כללית במערכת האימות החיצונית: {e}")
             is_member_found = False
 
-        # חסימה מוחלטת: אם הוא לא נמצא בשרת השני (או שיש שגיאה), המערכת עוצרת כאן!
         if not is_member_found:
             return await i.response.send_message(
                 "❌ בשביל להתאמת כאן, אתה חייב להיות קודם כל בשרת הראשי שלנו!\n"
@@ -258,7 +256,6 @@ class VerifyView(ui.View):
                 ephemeral=True
             )
         
-        # מתן הרול רק במידה והבדיקה עברה בהצלחה והמשתמש נמצא
         await i.user.add_roles(role)
         await i.response.send_message("🎉 אומתת בהצלחה! ברוך הבא לשרת.", ephemeral=True)
 
@@ -695,7 +692,7 @@ async def unraid(i: discord.Interaction):
 # --- 7. פקודות מודרציה, ניהול וכלכלה ---
 # ==========================================
 
-@bot.tree.command(name="account_age", description="[כללי] בודק לפני כמה ימים נוצר החשןן של המשתמש.")
+@bot.tree.command(name="account_age", description="[כללי] בודק לפני כמה ימים נוצר החשבון של המשתמש.")
 async def account_age_cmd(i: discord.Interaction, member: discord.Member = None):
     target_member = member or i.user
     now_utc = datetime.now(target_member.created_at.tzinfo)
@@ -713,10 +710,4 @@ async def pay(i: discord.Interaction, to: discord.Member, amount: int):
 
 @bot.tree.command(name="jail_add", description="[צוות כלא/מנהל/אונר] שולח משתמש לכלא לשעתיים.")
 async def jail_add(i: discord.Interaction, member: discord.Member):
-    if not is_owner_or_jail_staff(i): return await send_unauthorized_alert(i, "jail_add", "צוות כלא / מנהל / אונר")
-    add_to_jail_db(member.id, datetime.now() + timedelta(hours=2))
-    await i.response.send_message(f"✅ 🔒 המשתמש {member.mention} ננעל בתוך הכלא למשך שעתיים.")
-
-@bot.tree.command(name="jail_remove", description="[צוות כלא/מנהל/אונר] משחרר משתמש מהכלא.")
-async def jail_remove(i: discord.Interaction, member: discord.Member):
-    if
+    if not is_owner_or_jail_staff(i): return await send_un
