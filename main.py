@@ -230,12 +230,14 @@ class VerifyView(ui.View):
             # בדיקת Fetch חיה מול השרת
             await required_guild.fetch_member(i.user.id)
         except discord.NotFound:
-            return await i.followup.send("❌ בשביל להתאמת אתה חייב להיות בשרת הבא:\nhttps://discord.gg/ptxgJ7xher", ephemeral=True)
+            # אם המשתמש לא בשרת - נציג לו את ההודעה המעודכנת
+            return await i.followup.send("על מנת לקבל את כל האינטרקציות בשרת עליך להיות בשרת גיבוי\nhttps://discord.gg/ptxgJ7xher", ephemeral=True)
         except discord.Forbidden:
             return await i.followup.send("❌ שגיאה: לבוט אין הרשאות מתאימות (Members Intent) לבדוק משתמשים בשרת המבוקש.", ephemeral=True)
         except Exception as e:
             return await i.followup.send(f"❌ שגיאה בלתי צפויה בעת הבדיקה: {e}", ephemeral=True)
 
+        # כאן מגיעים אם המשתמש כן נמצא בשרת (הבדיקה עברה בהצלחה ללא שגיאת NotFound)
         role = i.guild.get_role(ROLES["VERIFIED"])
         if role is None:
             return await i.followup.send("❌ שגיאה: רול האימות לא נמצא בשרת, אנא פנה למנהל.", ephemeral=True)
@@ -456,7 +458,8 @@ async def on_message(message: discord.Message):
                 emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
                 emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
                 emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
-                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n```", inline=False)
+                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n
+```", inline=False)
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
 
