@@ -19,6 +19,10 @@ MY_USER_ID = 1130542850883469443
 JAIL_STAFF_ROLE_ID = 1501959601405427902
 ADMIN_ACCESS_ROLE_ID = 1499868525844627478
 
+# הגדרות שרת הגיבוי (החובה) עבור מערכת האימות
+BACKUP_GUILD_ID = 1346083597811089458  
+BACKUP_INVITE_URL = "https://discord.gg/28mjTjX5Y4"
+
 CHANNELS = {
     "FEEDBACK": 1505632543066689686,        
     "WELCOME": 1505634203776319539,         
@@ -141,10 +145,7 @@ class BankHeistModal(ui.Modal, title="🏦 תכנון שוד הבנק הגדול
     amount_input = ui.TextInput(label="כמה כסף ברצונך לשדוד? (1 - 7,000)", placeholder="למשל: 5000", max_length=4)
     
     async def on_submit(self, i: discord.Interaction):
-        # בדיקת רול חובה לכל פעולה
-        if not has_owner_or_admin_permission(i):
-            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
-            
+        # 🔓 כפתורים ומודאלים פתוחים לכולם
         jail_list = get_jail_list_from_db()
         if i.user.id in jail_list: 
             return await i.response.send_message("❌ אתה בכלא, אי אפשר לבצע פשעים!", ephemeral=True)
@@ -174,9 +175,7 @@ class SuggestionModal(ui.Modal, title="💡 הצעה חדשה לשיפור"):
     suggestion = ui.TextInput(label="מה ההצעה שלך?", style=discord.TextStyle.paragraph)
     
     async def on_submit(self, i: discord.Interaction):
-        if not has_owner_or_admin_permission(i):
-            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
-            
+        # 🔓 פתוח לכולם
         emb = discord.Embed(title="💡 הצעה חדשה", description=self.suggestion.value, color=0xffd700, timestamp=datetime.now())
         emb.set_author(name=i.user.name, icon_url=i.user.display_avatar.url)
         msg = await i.guild.get_channel(CHANNELS["SUGGESTIONS"]).send(embed=emb)
@@ -189,9 +188,7 @@ class ReportModal(ui.Modal, title="🚨 דיווח על שחקן"):
     reason = ui.TextInput(label="סיבת הדיווח ופרטים", style=discord.TextStyle.paragraph)
     
     async def on_submit(self, i: discord.Interaction):
-        if not has_owner_or_admin_permission(i):
-            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
-            
+        # 🔓 פתוח לכולם
         emb = discord.Embed(title="🚨 דיווח חדש התקבל", color=0xff0000, timestamp=datetime.now())
         emb.add_field(name="המדווח:", value=i.user.mention, inline=True)
         emb.add_field(name="הנידון:", value=self.player.value, inline=True)
@@ -204,9 +201,7 @@ class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
     anon = ui.TextInput(label="האם לשלוח כאנונימי? (כן/לא)", max_length=2, default="לא")
     
     async def on_submit(self, i: discord.Interaction):
-        if not has_owner_or_admin_permission(i):
-            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
-            
+        # 🔓 פתוח לכולם
         now = datetime.now()
         if i.user.id in feedback_cooldown and now < feedback_cooldown[i.user.id] + timedelta(minutes=5):
             return await i.response.send_message("❌ יש להמתין 5 דקות בין פידבק לפידבק!", ephemeral=True)
@@ -240,27 +235,40 @@ class VerifyView(ui.View):
         
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
     async def verify_user(self, i: discord.Interaction, b: ui.Button):
-        if not has_owner_or_admin_permission(i):
-            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
-            
         role = i.guild.get_role(ROLES["VERIFIED"])
         if role in i.user.roles: 
             return await i.response.send_message("❌ אתה כבר מאומת בשרת!", ephemeral=True)
+            
+        backup_guild = i.client.get_guild(BACKUP_GUILD_ID)
+        if not backup_guild:
+            return await i.response.send_message("⚠️ שגיאה: הבוט אינו נמצא בשרת הגיבוי או שה-ID שהוזן שגוי. פנה לאונר.", ephemeral=True)
+            
+        backup_member = backup_guild.get_member(i.user.id)
+        if not backup_member:
+            emb = discord.Embed(
+                title="🔒 אימות נכשל - חסר שלב חובה!",
+                description=f"שלום {i.user.mention},\nבשביל להשלים את תהליך האימות בשרת, **אתה חייב להיות חבר גם בשרת הגיבוי שלנו**.\n\nאנא כנס לשרת מהכפתור למטה ולאחר מכן לחץ שוב על כפתור האימות!",
+                color=0xff0000,
+                timestamp=datetime.now()
+            )
+            
+            link_view = ui.View()
+            link_view.add_item(ui.Button(label="🔗 כניסה לשרת הגיבוי", url=BACKUP_INVITE_URL))
+            return await i.response.send_message(embed=emb, view=link_view, ephemeral=True)
+            
         await i.user.add_roles(role)
-        await i.response.send_message("🎉 אומתת בהצלחה! ברוך הבא לשרת.", ephemeral=True)
+        await i.response.send_message("🎉 אומתת בהצלחה (נמצאת גם בשרת הגיבוי)! ברוך הבא לשרת.", ephemeral=True)
 
 class ShopView(ui.View):
     def __init__(self): super().__init__(timeout=None)
         
     @ui.button(label="💰 בדיקת יתרה (Bal)", style=discord.ButtonStyle.primary, custom_id="sh_bal", row=0)
     async def check_bal(self, i: discord.Interaction, b: ui.Button): 
-        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         bal = get_user_data(i.user.id, 'balance', 0)
         await i.response.send_message(f"💰 היתרה הנוכחית שלך עומדת על: **₪{bal:,}**", ephemeral=True)
 
     @ui.button(label="🛠️ צא לעבודה (Work)", style=discord.ButtonStyle.primary, custom_id="sh_work", row=0)
     async def do_work(self, i: discord.Interaction, b: ui.Button):
-        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         now = datetime.now()
         last = work_cooldown.get(i.user.id)
         if last and now < last + timedelta(minutes=10):
@@ -275,17 +283,14 @@ class ShopView(ui.View):
 
     @ui.button(label="קנה Supporter 🎗️", style=discord.ButtonStyle.secondary, custom_id="sh_supp", row=1)
     async def buy_supp(self, i: discord.Interaction, b: ui.Button): 
-        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         await self.process_purchase(i, 2000, ROLES["SUPPORTER"], "Supporter")
         
     @ui.button(label="קנה VIP 💎", style=discord.ButtonStyle.secondary, custom_id="sh_vip", row=1)
     async def buy_vip(self, i: discord.Interaction, b: ui.Button): 
-        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         await self.process_purchase(i, 5000, ROLES["VIP"], "VIP")
     
     @ui.button(label="🎁 פרס יומי (Daily)", style=discord.ButtonStyle.success, custom_id="sh_daily", row=2)
     async def claim_daily(self, i: discord.Interaction, b: ui.Button):
-        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         now = datetime.now()
         last = daily_cooldown.get(i.user.id)
         if last and now < last + timedelta(days=1):
@@ -318,7 +323,6 @@ class PoliceView(ui.View):
         
     @ui.button(label="🚨 התקשר למשטרה! (10 שניות)", style=discord.ButtonStyle.danger, custom_id="p_call")
     async def call_police(self, i: discord.Interaction, b: ui.Button):
-        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         self.called = True
         self.stop()
         release_time = datetime.now() + timedelta(hours=2)
@@ -332,7 +336,6 @@ class HeistView(ui.View):
         
     @ui.button(label="👤 שדוד משתמש (Rob)", style=discord.ButtonStyle.secondary, custom_id="he_user")
     async def rob_user(self, i: discord.Interaction, b: ui.Button):
-        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         jail_list = get_jail_list_from_db()
         if i.user.id in jail_list: 
             return await i.response.send_message("❌ אתה בכלא, אי אפשר לבצע פשעים!", ephemeral=True)
@@ -340,7 +343,6 @@ class HeistView(ui.View):
         select = ui.UserSelect(placeholder="בחר את השחקן שברצונך לשדוד...")
         
         async def callback(inter: discord.Interaction):
-            if not has_owner_or_admin_permission(inter): return await inter.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
             select.disabled = True
             await inter.message.edit(view=view)
             target = select.values[0]
@@ -371,20 +373,17 @@ class HeistView(ui.View):
 
     @ui.button(label="🏦 שוד בנק (Bank Heist)", style=discord.ButtonStyle.danger, custom_id="he_bank")
     async def rob_bank(self, i: discord.Interaction, b: ui.Button):
-        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         if i.user.id in get_jail_list_from_db(): return await i.response.send_message("❌ אתה בכלא!", ephemeral=True)
         await i.response.send_modal(BankHeistModal())
 
     @ui.button(label="🔓 שחרור בערבות (₪5,000)", style=discord.ButtonStyle.success, custom_id="he_bail")
     async def bail_friend(self, i: discord.Interaction, b: ui.Button):
-        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         my_bal = get_user_data(i.user.id, 'balance', 0)
         if my_bal < 5000: return await i.response.send_message("❌ אין לך ₪5,000!", ephemeral=True)
         view = ui.View()
         select = ui.UserSelect(placeholder="בחר חבר לשחרור...")
         
         async def callback(select_inter: discord.Interaction):
-            if not has_owner_or_admin_permission(select_inter): return await select_inter.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
             select.disabled = True
             await select_inter.message.edit(view=view)
             friend = select.values[0]
@@ -429,12 +428,18 @@ class CyberMasterBot(commands.Bot):
 
         @self.tree.interaction_check
         async def global_interaction_check(interaction: discord.Interaction) -> bool:
-            # אונר הבוט תמיד יכול לעקוף, שאר המשתמשים חייבים את הרול
+            # 🛠️ התיקון המרכזי: אם מדובר בלחיצה על כפתור או שליחת מודאל (Component / Modal) - תאפשר לכולם!
+            if interaction.type in (discord.InteractionType.component, discord.InteractionType.modal_submit):
+                return True
+                
+            # הגנה קשוחה על פקודות סלאש (Slash Commands) בלבד
             if interaction.user.id == MY_USER_ID:
                 return True
+                
             admin_role = interaction.guild.get_role(ADMIN_ACCESS_ROLE_ID)
             if admin_role and admin_role in interaction.user.roles:
                 return True
+                
             return False
 
         self.jail_loop.start()
