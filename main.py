@@ -486,8 +486,9 @@ async def on_message(message: discord.Message):
                 emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
                 emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
                 emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
-                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n
-```", inline=False)
+                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"""```
+{message.content}
+```""", inline=False)
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
 
@@ -699,7 +700,7 @@ async def unraid(i: discord.Interaction):
         overwrite.send_messages = None
         overwrite.view_channel = True
         await verify_ch.set_permissions(i.guild.default_role, overwrite=overwrite)
-    await i.response.send_message("🔓 מצב ה-Raid בוטל בהצלחה. חדר האימות נפתח מחדש!", ephemeral=True)
+    await i.response.send_message("🔓 מצב ה-Raid בבוטל בהצלחה. חדר האימות נפתח מחדש!", ephemeral=True)
 
 
 # ==========================================
