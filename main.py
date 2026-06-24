@@ -120,7 +120,7 @@ def has_owner_or_admin_permission(i: discord.Interaction):
     admin_role = i.guild.get_role(ADMIN_ACCESS_ROLE_ID)
     return admin_role in i.user.roles
 
-async def send_unauthorized_alert(i: discord.Interaction, cmd_name: str, required_role: str = "אונר בלבד"):
+async def send_unauthorized_alert(i: discord.Interaction, cmd_name: str, required_role: str = "גישה מוגבלת"):
     log_ch = i.guild.get_channel(CHANNELS["OWNER_LOGS"])
     if log_ch:
         emb = discord.Embed(title="🚨 ניסיון פריצה / שימוש אסור בפקודה!", color=0xff0000, timestamp=datetime.now())
@@ -129,7 +129,7 @@ async def send_unauthorized_alert(i: discord.Interaction, cmd_name: str, require
         emb.add_field(name="הרשאה נדרשת:", value=f"`{required_role}`", inline=False)
         await log_ch.send(embed=emb)
     try:
-        dm_emb = discord.Embed(title="⚠️ אזהרת מערכת חמורה - Cyber Security", description=f"שלום {i.user.name},\nניסית להפעיל את הפקודה המוגנת `/{cmd_name}` ללא הרשאות.", color=0xff0000)
+        dm_emb = discord.Embed(title="⚠️ אזהרת מערכת חמורה - Cyber Security", description=f"שלום {i.user.name},\nניסית להפעיל את הפקודה המוגנת `/{cmd_name}` ללא הרשאות המתאימות.", color=0xff0000)
         await i.user.send(embed=dm_emb)
     except: pass
 
@@ -141,6 +141,10 @@ class BankHeistModal(ui.Modal, title="🏦 תכנון שוד הבנק הגדול
     amount_input = ui.TextInput(label="כמה כסף ברצונך לשדוד? (1 - 7,000)", placeholder="למשל: 5000", max_length=4)
     
     async def on_submit(self, i: discord.Interaction):
+        # בדיקת רול חובה לכל פעולה
+        if not has_owner_or_admin_permission(i):
+            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
+            
         jail_list = get_jail_list_from_db()
         if i.user.id in jail_list: 
             return await i.response.send_message("❌ אתה בכלא, אי אפשר לבצע פשעים!", ephemeral=True)
@@ -170,6 +174,9 @@ class SuggestionModal(ui.Modal, title="💡 הצעה חדשה לשיפור"):
     suggestion = ui.TextInput(label="מה ההצעה שלך?", style=discord.TextStyle.paragraph)
     
     async def on_submit(self, i: discord.Interaction):
+        if not has_owner_or_admin_permission(i):
+            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
+            
         emb = discord.Embed(title="💡 הצעה חדשה", description=self.suggestion.value, color=0xffd700, timestamp=datetime.now())
         emb.set_author(name=i.user.name, icon_url=i.user.display_avatar.url)
         msg = await i.guild.get_channel(CHANNELS["SUGGESTIONS"]).send(embed=emb)
@@ -182,6 +189,9 @@ class ReportModal(ui.Modal, title="🚨 דיווח על שחקן"):
     reason = ui.TextInput(label="סיבת הדיווח ופרטים", style=discord.TextStyle.paragraph)
     
     async def on_submit(self, i: discord.Interaction):
+        if not has_owner_or_admin_permission(i):
+            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
+            
         emb = discord.Embed(title="🚨 דיווח חדש התקבל", color=0xff0000, timestamp=datetime.now())
         emb.add_field(name="המדווח:", value=i.user.mention, inline=True)
         emb.add_field(name="הנידון:", value=self.player.value, inline=True)
@@ -194,6 +204,9 @@ class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
     anon = ui.TextInput(label="האם לשלוח כאנונימי? (כן/לא)", max_length=2, default="לא")
     
     async def on_submit(self, i: discord.Interaction):
+        if not has_owner_or_admin_permission(i):
+            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
+            
         now = datetime.now()
         if i.user.id in feedback_cooldown and now < feedback_cooldown[i.user.id] + timedelta(minutes=5):
             return await i.response.send_message("❌ יש להמתין 5 דקות בין פידבק לפידבק!", ephemeral=True)
@@ -207,6 +220,14 @@ class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
         inline_view.add_item(b_inline)
         
         await i.guild.get_channel(CHANNELS["FEEDBACK"]).send(embed=emb, view=inline_view)
+        
+        admin_logs_ch = i.guild.get_channel(1505636914588287006)
+        if admin_logs_ch:
+            admin_emb = discord.Embed(title="🕵️ לוג פידבק חסוי לצוות", description=self.content.value, color=0x7289da, timestamp=now)
+            admin_emb.add_field(name="המשתמש האמיתי:", value=f"{i.user.mention} (`{i.user.id}`)", inline=True)
+            admin_emb.add_field(name="נשלח כאנונימי לקהילה?", value=f"`{self.anon.value}`", inline=True)
+            await admin_logs_ch.send(embed=admin_emb)
+            
         feedback_cooldown[i.user.id] = now
         await i.response.send_message("✅ הפידבק נשלח בהצלחה, תודה לך!", ephemeral=True)
 
@@ -219,6 +240,9 @@ class VerifyView(ui.View):
         
     @ui.button(label="✅ לחץ כאן לאימות", style=discord.ButtonStyle.success, custom_id="v_verify")
     async def verify_user(self, i: discord.Interaction, b: ui.Button):
+        if not has_owner_or_admin_permission(i):
+            return await i.response.send_message("❌ אין לך את הרול הנדרש כדי לבצע פעולה זו!", ephemeral=True)
+            
         role = i.guild.get_role(ROLES["VERIFIED"])
         if role in i.user.roles: 
             return await i.response.send_message("❌ אתה כבר מאומת בשרת!", ephemeral=True)
@@ -230,11 +254,13 @@ class ShopView(ui.View):
         
     @ui.button(label="💰 בדיקת יתרה (Bal)", style=discord.ButtonStyle.primary, custom_id="sh_bal", row=0)
     async def check_bal(self, i: discord.Interaction, b: ui.Button): 
+        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         bal = get_user_data(i.user.id, 'balance', 0)
         await i.response.send_message(f"💰 היתרה הנוכחית שלך עומדת על: **₪{bal:,}**", ephemeral=True)
 
     @ui.button(label="🛠️ צא לעבודה (Work)", style=discord.ButtonStyle.primary, custom_id="sh_work", row=0)
     async def do_work(self, i: discord.Interaction, b: ui.Button):
+        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         now = datetime.now()
         last = work_cooldown.get(i.user.id)
         if last and now < last + timedelta(minutes=10):
@@ -249,14 +275,17 @@ class ShopView(ui.View):
 
     @ui.button(label="קנה Supporter 🎗️", style=discord.ButtonStyle.secondary, custom_id="sh_supp", row=1)
     async def buy_supp(self, i: discord.Interaction, b: ui.Button): 
+        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         await self.process_purchase(i, 2000, ROLES["SUPPORTER"], "Supporter")
         
     @ui.button(label="קנה VIP 💎", style=discord.ButtonStyle.secondary, custom_id="sh_vip", row=1)
     async def buy_vip(self, i: discord.Interaction, b: ui.Button): 
+        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         await self.process_purchase(i, 5000, ROLES["VIP"], "VIP")
     
     @ui.button(label="🎁 פרס יומי (Daily)", style=discord.ButtonStyle.success, custom_id="sh_daily", row=2)
     async def claim_daily(self, i: discord.Interaction, b: ui.Button):
+        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         now = datetime.now()
         last = daily_cooldown.get(i.user.id)
         if last and now < last + timedelta(days=1):
@@ -289,6 +318,7 @@ class PoliceView(ui.View):
         
     @ui.button(label="🚨 התקשר למשטרה! (10 שניות)", style=discord.ButtonStyle.danger, custom_id="p_call")
     async def call_police(self, i: discord.Interaction, b: ui.Button):
+        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         self.called = True
         self.stop()
         release_time = datetime.now() + timedelta(hours=2)
@@ -302,6 +332,7 @@ class HeistView(ui.View):
         
     @ui.button(label="👤 שדוד משתמש (Rob)", style=discord.ButtonStyle.secondary, custom_id="he_user")
     async def rob_user(self, i: discord.Interaction, b: ui.Button):
+        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         jail_list = get_jail_list_from_db()
         if i.user.id in jail_list: 
             return await i.response.send_message("❌ אתה בכלא, אי אפשר לבצע פשעים!", ephemeral=True)
@@ -309,6 +340,7 @@ class HeistView(ui.View):
         select = ui.UserSelect(placeholder="בחר את השחקן שברצונך לשדוד...")
         
         async def callback(inter: discord.Interaction):
+            if not has_owner_or_admin_permission(inter): return await inter.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
             select.disabled = True
             await inter.message.edit(view=view)
             target = select.values[0]
@@ -339,17 +371,20 @@ class HeistView(ui.View):
 
     @ui.button(label="🏦 שוד בנק (Bank Heist)", style=discord.ButtonStyle.danger, custom_id="he_bank")
     async def rob_bank(self, i: discord.Interaction, b: ui.Button):
+        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         if i.user.id in get_jail_list_from_db(): return await i.response.send_message("❌ אתה בכלא!", ephemeral=True)
         await i.response.send_modal(BankHeistModal())
 
     @ui.button(label="🔓 שחרור בערבות (₪5,000)", style=discord.ButtonStyle.success, custom_id="he_bail")
     async def bail_friend(self, i: discord.Interaction, b: ui.Button):
+        if not has_owner_or_admin_permission(i): return await i.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
         my_bal = get_user_data(i.user.id, 'balance', 0)
         if my_bal < 5000: return await i.response.send_message("❌ אין לך ₪5,000!", ephemeral=True)
         view = ui.View()
         select = ui.UserSelect(placeholder="בחר חבר לשחרור...")
         
         async def callback(select_inter: discord.Interaction):
+            if not has_owner_or_admin_permission(select_inter): return await select_inter.response.send_message("❌ אין לך את הרול הנדרש!", ephemeral=True)
             select.disabled = True
             await select_inter.message.edit(view=view)
             friend = select.values[0]
@@ -383,6 +418,25 @@ class CyberMasterBot(commands.Bot):
         inline_view.add_item(b_inline)
         self.add_view(inline_view)
         
+        # --- 🔒 הגנה גלובלית הרמטית על כל פקודות ה-Slash בשרת ---
+        @self.tree.error
+        async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+            if isinstance(error, app_commands.CheckFailure):
+                await interaction.response.send_message("❌ פקודה חסומה! רק מי שמחזיק ברול <@&1499868525844627478> מורשה להשתמש בבוט זה.", ephemeral=True)
+                await send_unauthorized_alert(interaction, interaction.command.name, "רול גישה מורשה")
+            else:
+                print(f"Error: {error}")
+
+        @self.tree.interaction_check
+        async def global_interaction_check(interaction: discord.Interaction) -> bool:
+            # אונר הבוט תמיד יכול לעקוף, שאר המשתמשים חייבים את הרול
+            if interaction.user.id == MY_USER_ID:
+                return True
+            admin_role = interaction.guild.get_role(ADMIN_ACCESS_ROLE_ID)
+            if admin_role and admin_role in interaction.user.roles:
+                return True
+            return False
+
         self.jail_loop.start()
         self.lb_loop.start()
         await self.tree.sync()
@@ -432,8 +486,8 @@ async def on_message(message: discord.Message):
                 emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
                 emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
                 emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
-                # 🛡️ כאן תוקנה השגיאה של ה-f-string בהצלחה!
-                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n```", inline=False)
+                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n
+```", inline=False)
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
 
@@ -507,7 +561,7 @@ async def on_member_join(member: discord.Member):
             overwrite.view_channel = False
             await verify_ch.set_permissions(member.guild.default_role, overwrite=overwrite)
 
-    # --- 🚨 מערכת ANTI-ALT - מותאמת במדויק לקובץ image.png ---
+    # --- 🚨 מערכת ANTI-ALT ---
     try:
         now_utc = datetime.now(member.created_at.tzinfo)
         account_age = now_utc - member.created_at
@@ -591,14 +645,12 @@ async def on_member_update(before, after):
 # ==========================================
 @bot.tree.command(name="setup_shop", description="[מנהל/אונר] מקים את פאנל החנות.")
 async def s_shop(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_shop")
     emb = discord.Embed(title="═💠 CYBER-STORE MARKET 💠═", description="נהל את הבנק שלך, צא לעבוד ורכוש הטבות ורולים מיוחדים!", color=0x2b2d31)
     await i.channel.send(embed=emb, view=ShopView())
     await i.response.send_message("✅ פאנל חנות הוקם!", ephemeral=True)
 
 @bot.tree.command(name="setup_leaderboard", description="[מנהל/אונר] מקים את טבלת העשירים.")
 async def s_leaderboard(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_leaderboard")
     emb = discord.Embed(title="🏆 טבלת עשירים - Cyber Economy", description="הטבלה בטעינה, תתעדכן אוטומטית בעוד מספר רגעים...", color=0xffd700, timestamp=datetime.now())
     msg = await i.channel.send(embed=emb)
     leaderboard_config["channel_id"] = i.channel.id
@@ -607,14 +659,12 @@ async def s_leaderboard(i: discord.Interaction):
 
 @bot.tree.command(name="setup_heist", description="[מנהל/אונר] מקים את פאנל השודים ועולם הפשע.")
 async def s_heist(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_heist")
     emb = discord.Embed(title="🔫 עולם הפשע והחוק - Heist Panel", description="בצע שודים, פוצץ את כספות הבנק או שחרר חברים מהכלא בערבות כספית!", color=0x000000)
     await i.channel.send(embed=emb, view=HeistView())
     await i.response.send_message("✅ פאנל שודים הוקם בהצלחה!", ephemeral=True)
 
 @bot.tree.command(name="setup_tickets", description="[מנהל/אונר] פאנל דיווחים והצעות.")
 async def s_tickets(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_tickets")
     v = ui.View(timeout=None)
     b_rep = ui.Button(label="🚨 דווח על שחקן", style=discord.ButtonStyle.danger, custom_id="tk_rep")
     b_sug = ui.Button(label="💡 שלח הצעה לשיפור", style=discord.ButtonStyle.secondary, custom_id="tk_sug")
@@ -626,7 +676,6 @@ async def s_tickets(i: discord.Interaction):
 
 @bot.tree.command(name="setup_feedback", description="[מנהל/אונר] פאנל פידבקים.")
 async def s_feedback(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_feedback")
     v = ui.View(timeout=None)
     b = ui.Button(label="📩 שלח פידבק", style=discord.ButtonStyle.primary, custom_id="f_open")
     b.callback = lambda inter: inter.response.send_modal(FeedbackModal())
@@ -636,7 +685,6 @@ async def s_feedback(i: discord.Interaction):
 
 @bot.tree.command(name="setup_verify", description="[מנהל/אונר] פאנל מערכת האימות.")
 async def s_verify(i: discord.Interaction):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "setup_verify")
     emb = discord.Embed(title="🛡️ מערכת אימות הגנה - Verify", description="לחצו על הכפתור הירוק למטה כדי לקבל גישה לשרת.", color=0x00ff00)
     await i.channel.send(embed=emb, view=VerifyView())
     await i.response.send_message("✅ פאנל אימות הוקם!", ephemeral=True)
@@ -644,7 +692,6 @@ async def s_verify(i: discord.Interaction):
 @bot.tree.command(name="unraid", description="[אונר בלבד] מכבה את מצב ה-Raid.")
 async def unraid(i: discord.Interaction):
     global raid_mode_active
-    if i.user.id != MY_USER_ID: return await send_unauthorized_alert(i, "unraid")
     raid_mode_active = False
     verify_ch = i.guild.get_channel(1501316672345211041)
     if verify_ch:
@@ -677,13 +724,11 @@ async def pay(i: discord.Interaction, to: discord.Member, amount: int):
 
 @bot.tree.command(name="jail_add", description="[צוות כלא/מנהל/אונר] שולח משתמש לכלא לשעתיים.")
 async def jail_add(i: discord.Interaction, member: discord.Member):
-    if not is_owner_or_jail_staff(i): return await send_unauthorized_alert(i, "jail_add", "צוות כלא / מנהל / אונר")
     add_to_jail_db(member.id, datetime.now() + timedelta(hours=2))
     await i.response.send_message(f"✅ 🔒 המשתמש {member.mention} ננעל בתוך הכלא למשך שעתיים.")
 
 @bot.tree.command(name="jail_remove", description="[צוות כלא/מנהל/אונר] משחרר משתמש מהכלא.")
 async def jail_remove(i: discord.Interaction, member: discord.Member):
-    if not is_owner_or_jail_staff(i): return await send_unauthorized_alert(i, "jail_remove", "צוות כלא / מנהל / אונר")
     if member.id in get_jail_list_from_db(): 
         remove_from_jail_db(member.id)
         await i.response.send_message(f"✅ 🔓 המשתמש {member.mention} שוחרר מהכלא.")
@@ -691,7 +736,6 @@ async def jail_remove(i: discord.Interaction, member: discord.Member):
 
 @bot.tree.command(name="warn", description="[מנהל/אונר] נותן אזהרה למשתמש.")
 async def warn(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "warn")
     current_warns = get_user_data(member.id, 'warns', 0) + 1
     set_user_data(member.id, 'warns', current_warns)
     log = i.guild.get_channel(CHANNELS["WARNS_LOG"])
@@ -703,7 +747,6 @@ async def warn(i: discord.Interaction, member: discord.Member, reason: str):
 
 @bot.tree.command(name="unwarn", description="[מנהל/אונר] מוריד אזהרה אחת למשתמש.")
 async def unwarn(i: discord.Interaction, member: discord.Member):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "unwarn")
     current_warns = get_user_data(member.id, 'warns', 0)
     if current_warns <= 0: return await i.response.send_message("❌ למשתמש אין אזהרות.", ephemeral=True)
     set_user_data(member.id, 'warns', current_warns - 1)
@@ -711,33 +754,28 @@ async def unwarn(i: discord.Interaction, member: discord.Member):
 
 @bot.tree.command(name="mute", description="[מנהל/אונר] מקצה רול השתקה (Mute) למשתמש.")
 async def mute(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "mute")
     role = i.guild.get_role(ROLES["MUTE"])
     if role: await member.add_roles(role)
     await i.response.send_message(f"🚫 {member.mention} הושתק. סיבה: `{reason}`")
 
 @bot.tree.command(name="unmute", description="[מנהל/אונר] מסיר רול השתקה.")
 async def unmute(i: discord.Interaction, member: discord.Member):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "unmute")
     role = i.guild.get_role(ROLES["MUTE"])
     if role: await member.remove_roles(role)
     await i.response.send_message(f"🔊 {member.mention} שוחרר מההשתקה.")
 
 @bot.tree.command(name="kick", description="[מנהל/אונר] מגרש משתמש מהשרת.")
 async def kick(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "kick")
     await member.kick(reason=reason)
     await i.response.send_message(f"👞 המשתמש `{member.name}` הועף מהשרת. סיבה: `{reason}`")
 
 @bot.tree.command(name="ban", description="[מנהל/אונר] חוסם משתמש מהשרת.")
 async def ban(i: discord.Interaction, member: discord.Member, reason: str):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "ban")
     await member.ban(reason=reason)
     await i.response.send_message(f"🚫 המשתמש `{member.name}` נחסם מהשרת. סיבה: `{reason}`")
 
 @bot.tree.command(name="clear", description="[מנהל/אונר] מוחק הודעות מהערוץ הנוכחי.")
 async def clear(i: discord.Interaction, amount: int):
-    if not has_owner_or_admin_permission(i): return await send_unauthorized_alert(i, "clear")
     if amount <= 0: return await i.response.send_message("❌ הזן מספר תקין.", ephemeral=True)
     await i.channel.purge(limit=amount)
     await i.response.send_message(f"🧹 נמחקו בהצלחה `{amount}` הודעות!", ephemeral=True)
