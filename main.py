@@ -19,6 +19,9 @@ MY_USER_ID = 1130542850883469443
 JAIL_STAFF_ROLE_ID = 1501959601405427902
 ADMIN_ACCESS_ROLE_ID = 1499868525844627478
 
+# רשימת ה-IDs המורשים לעקוף את כל החסימות והפקודות (Owners)
+OWNER_IDS = [1493293951959044147, 1130542850883469443, 1483411120961093642]
+
 # ה
 # הגדרות שרת הגיבוי המעודכנות
 BACKUP_GUILD_ID = 1516718095861940265  
@@ -115,14 +118,14 @@ def remove_from_jail_db(user_id):
         pass
 
 def is_owner_or_jail_staff(i: discord.Interaction):
-    if i.user.id == MY_USER_ID: return True
+    if i.user.id in OWNER_IDS: return True
     admin_role = i.guild.get_role(ADMIN_ACCESS_ROLE_ID)
     if admin_role in i.user.roles: return True
     role = i.guild.get_role(JAIL_STAFF_ROLE_ID)
     return role in i.user.roles
 
 def has_owner_or_admin_permission(i: discord.Interaction):
-    if i.user.id == MY_USER_ID: return True
+    if i.user.id in OWNER_IDS: return True
     admin_role = i.guild.get_role(ADMIN_ACCESS_ROLE_ID)
     return admin_role in i.user.roles
 
@@ -147,7 +150,6 @@ class BankHeistModal(ui.Modal, title="🏦 תכנון שוד הבנק הגדול
     amount_input = ui.TextInput(label="כמה כסף ברצונך לשדוד? (1 - 7,000)", placeholder="למשל: 5000", max_length=4)
     
     async def on_submit(self, i: discord.Interaction):
-        # 🔓 כפתורים ומודאלים פתוחים לכולם
         jail_list = get_jail_list_from_db()
         if i.user.id in jail_list: 
             return await i.response.send_message("❌ אתה בכלא, אי אפשר לבצע פשעים!", ephemeral=True)
@@ -177,7 +179,6 @@ class SuggestionModal(ui.Modal, title="💡 הצעה חדשה לשיפור"):
     suggestion = ui.TextInput(label="מה ההצעה שלך?", style=discord.TextStyle.paragraph)
     
     async def on_submit(self, i: discord.Interaction):
-        # 🔓 פתוח לכולם
         emb = discord.Embed(title="💡 הצעה חדשה", description=self.suggestion.value, color=0xffd700, timestamp=datetime.now())
         emb.set_author(name=i.user.name, icon_url=i.user.display_avatar.url)
         msg = await i.guild.get_channel(CHANNELS["SUGGESTIONS"]).send(embed=emb)
@@ -190,7 +191,6 @@ class ReportModal(ui.Modal, title="🚨 דיווח על שחקן"):
     reason = ui.TextInput(label="סיבת הדיווח ופרטים", style=discord.TextStyle.paragraph)
     
     async def on_submit(self, i: discord.Interaction):
-        # 🔓 פתוח לכולם
         emb = discord.Embed(title="🚨 דיווח חדש התקבל", color=0xff0000, timestamp=datetime.now())
         emb.add_field(name="המדווח:", value=i.user.mention, inline=True)
         emb.add_field(name="הנידון:", value=self.player.value, inline=True)
@@ -203,7 +203,6 @@ class FeedbackModal(ui.Modal, title="📩 שליחת פידבק לשרת"):
     anon = ui.TextInput(label="האם לשלוח כאנונימי? (כן/לא)", max_length=2, default="לא")
     
     async def on_submit(self, i: discord.Interaction):
-        # 🔓 פתוח לכולם
         now = datetime.now()
         if i.user.id in feedback_cooldown and now < feedback_cooldown[i.user.id] + timedelta(minutes=5):
             return await i.response.send_message("❌ יש להמתין 5 דקות בין פידבק לפידבק!", ephemeral=True)
@@ -273,7 +272,7 @@ class ShopView(ui.View):
     async def do_work(self, i: discord.Interaction, b: ui.Button):
         now = datetime.now()
         last = work_cooldown.get(i.user.id)
-        if last and now < last + timedelta(minutes=10):
+        if last and now < last + timedelta(minutes=10) and i.user.id not in OWNER_IDS:
             diff = (last + timedelta(minutes=10)) - now
             return await i.response.send_message(f"❌ חזור בעוד {diff.seconds // 60} דקות ו-{diff.seconds % 60} שניות.", ephemeral=True)
         amt = random.randint(200, 600)
@@ -295,7 +294,7 @@ class ShopView(ui.View):
     async def claim_daily(self, i: discord.Interaction, b: ui.Button):
         now = datetime.now()
         last = daily_cooldown.get(i.user.id)
-        if last and now < last + timedelta(days=1):
+        if last and now < last + timedelta(days=1) and i.user.id not in OWNER_IDS:
             diff = (last + timedelta(days=1)) - now
             hours, remainder = divmod(diff.seconds, 3600)
             minutes = remainder // 60
@@ -430,12 +429,11 @@ class CyberMasterBot(commands.Bot):
 
         @self.tree.interaction_check
         async def global_interaction_check(interaction: discord.Interaction) -> bool:
-            # 🛠️ התיקון המרכזי: אם מדובר בלחיצה על כפתור או שליחת מודאל (Component / Modal) - תאפשר לכולם!
             if interaction.type in (discord.InteractionType.component, discord.InteractionType.modal_submit):
                 return True
                 
-            # הגנה קשוחה על פקודות סלאש (Slash Commands) בלבד
-            if interaction.user.id == MY_USER_ID:
+            # הגנה קשוחה על פקודות סלאש (Slash Commands) בלבד - בודק אם המשתמש ברשימת ה-Owners
+            if interaction.user.id in OWNER_IDS:
                 return True
                 
             admin_role = interaction.guild.get_role(ADMIN_ACCESS_ROLE_ID)
@@ -479,7 +477,8 @@ async def on_message(message: discord.Message):
     user_id = message.author.id
 
     # --- 🔒 מערכת ANTI-LINK ---
-    if user_id != MY_USER_ID:
+    # בודק אם המשתמש הוא לא אחד מהאונרים ברשימה המורשית
+    if user_id not in OWNER_IDS:
         link_pattern = r"(https?://[^\s]+|discord\.gg/[^\s]+)"
         if re.search(link_pattern, message.content, re.IGNORECASE):
             try: await message.delete()  
@@ -509,7 +508,7 @@ async def on_message(message: discord.Message):
                 
             return  
 
-    if message.author.id == MY_USER_ID or message.author.guild_permissions.administrator:
+    if message.author.id in OWNER_IDS or message.author.guild_permissions.administrator:
         await bot.process_commands(message)
         return
 
