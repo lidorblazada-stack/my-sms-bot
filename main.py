@@ -22,7 +22,6 @@ ADMIN_ACCESS_ROLE_ID = 1499868525844627478
 # רשימת ה-IDs המורשים לעקוף את כל החסימות והפקודות (Owners)
 OWNER_IDS = [1493293951959044147, 1130542850883469443, 1483411120961093642]
 
-# ה
 # הגדרות שרת הגיבוי המעודכנות
 BACKUP_GUILD_ID = 1516718095861940265  
 BACKUP_INVITE_URL = "https://discord.gg/ptxgJ7xher"
@@ -471,16 +470,33 @@ bot = CyberMasterBot()
 # --- 🚨 מערכות סינון והגנה לצ'אט (אנטי-ספאם ואנטי-לינק) ---
 @bot.event
 async def on_message(message: discord.Message):
+    # 🛑 חסימה מוחלטת ומיידית לבוט הריידר (מוחק ועוצר בלי להמשיך לכלום)
+    if message.author.id == 1510282879706333194:
+        try: 
+            await message.delete()
+        except: 
+            pass
+        return
+
     if message.author.bot or not message.guild: return
     
     now = datetime.now()
     user_id = message.author.id
 
-    # --- 🔒 מערכת ANTI-LINK ---
-    # בודק אם המשתמש הוא לא אחד מהאונרים ברשימה המורשית
+    # --- 🔒 מערכת ANTI-LINK מורחבת (חוסמת מעקפי רווחים ותווים) ---
     if user_id not in OWNER_IDS:
-        link_pattern = r"(https?://[^\s]+|discord\.gg/[^\s]+)"
-        if re.search(link_pattern, message.content, re.IGNORECASE):
+        # יוצרים גרסה נקייה של הטקסט: מורידים רווחים, ירידות שורה, נקודות, קווים תחתונים וכו'
+        cleaned_content = re.sub(r'[\s\_\-\*\\\/\.\,]+', '', message.content).lower()
+        
+        # תבניות לזיהוי ביטויי מפתח שחוברו יחד לאחר הניקוי
+        bypass_patterns = ["discordgg", "http", "https", "www"]
+        
+        normal_link_pattern = r"(https?://[^\s]+|discord\.gg/[^\s]+)"
+        
+        # זיהוי: אם ה-Regex הרגיל תפס משהו, או שאחד מביטויי המעקף נמצא בטקסט הנקי
+        is_link_detected = re.search(normal_link_pattern, message.content, re.IGNORECASE) or any(p in cleaned_content for p in bypass_patterns)
+
+        if is_link_detected:
             try: await message.delete()  
             except: pass
 
@@ -489,18 +505,16 @@ async def on_message(message: discord.Message):
 
             owner_ch = message.guild.get_channel(CHANNELS["OWNER_LOGS"])
             if owner_ch:
-                emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום!", color=0xff0000, timestamp=now)
+                emb_owner = discord.Embed(title="🚨 מערכת אנטי-קישורים זיהתה איום / מעקף!", color=0xff0000, timestamp=now)
                 emb_owner.add_field(name="המשתמש ששלח:", value=f"{message.author.mention} (`{message.author.id}`)", inline=True)
                 emb_owner.add_field(name="הערוץ שבו נשלח:", value=message.channel.mention, inline=True)
-                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"""```
-{message.content}
-```""", inline=False)
+                emb_owner.add_field(name="תוכן ההודעה שנחסמה:", value=f"```\n{message.content}\n```", inline=False)
                 emb_owner.add_field(name="סטטוס אזהרות נוכחי:", value=f"`{current_warns}/3`", inline=False)
                 await owner_ch.send(embed=emb_owner)
 
             warn_ch = message.guild.get_channel(CHANNELS["WARNS_LOG"])
             if warn_ch:
-                await warn_ch.send(f"⚠️ **אזהרה אוטומטית** | המשתמש {message.author.mention} הוזהר על ידי מערכת האבטחה. סיבה: `פרסום קישורים אסור` (`{current_warns}/3`)")
+                await warn_ch.send(f"⚠️ **אזהרה אוטומטית** | המשתמש {message.author.mention} הוזהר על ידי מערכת האבטחה. סיבה: `פרסום קישורים או ניסיון מעקף` (`{current_warns}/3`)")
             
             if current_warns >= 3:
                 mute_role = message.guild.get_role(ROLES["MUTE"])
