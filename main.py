@@ -26,7 +26,6 @@ OWNER_IDS = [1493293951959044147, 1130542850883469443, 1483411120961093642]
 BACKUP_GUILD_ID = 1516718095861940265  
 BACKUP_INVITE_URL = "https://discord.gg/ptxgJ7xher"
 
-
 CHANNELS = {
     "FEEDBACK": 1505632543066689686,        
     "WELCOME": 1505634203776319539,         
@@ -483,22 +482,25 @@ async def on_message(message: discord.Message):
     now = datetime.now()
     user_id = message.author.id
 
-    # --- 🔒 מערכת ANTI-LINK מורחבת (חוסמת מעקפי רווחים ותווים) ---
+    # --- 🔒 מערכת ANTI-LINK מורחבת והרמטית (כולל חסימת רווחים ומעקפים) ---
     if user_id not in OWNER_IDS:
-        # יוצרים גרסה נקייה של הטקסט: מורידים רווחים, ירידות שורה, נקודות, קווים תחתונים וכו'
-        cleaned_content = re.sub(r'[\s\_\-\*\\\/\.\,]+', '', message.content).lower()
+        # 1. מנקים מהטקסט לחלוטין את כל סוגי הרווחים והתווים המיוחדים שיכולים לשמש כמעקף
+        cleaned_content = re.sub(r'[\s\_\-\*\\\/\.\,\?\!\|\]\[\)\(\}\:\;\d]+', '', message.content).lower()
         
-        # תבניות לזיהוי ביטויי מפתח שחוברו יחד לאחר הניקוי
-        bypass_patterns = ["discordgg", "http", "https", "www"]
+        # 2. תבניות מפתח שאסור שיעברו בשום צורה
+        bypass_patterns = ["discordgg", "http", "https", "www", ".gg", "discord.com/invite"]
         
-        normal_link_pattern = r"(https?://[^\s]+|discord\.gg/[^\s]+)"
+        # 3. רגקס רגיל לזיהוי קישורים סטנדרטיים
+        normal_link_pattern = r"(https?://[^\s]+|discord\.gg/[^\s]+|www\.[^\s]+)"
         
-        # זיהוי: אם ה-Regex הרגיל תפס משהו, או שאחד מביטויי המעקף נמצא בטקסט הנקי
+        # בדיקה האם קישור רגיל זוהה, או שאחד מהביטויים הנקיים מופיע בטקסט המשובש שחובר
         is_link_detected = re.search(normal_link_pattern, message.content, re.IGNORECASE) or any(p in cleaned_content for p in bypass_patterns)
 
         if is_link_detected:
-            try: await message.delete()  
-            except: pass
+            try: 
+                await message.delete()  
+            except: 
+                pass
 
             current_warns = get_user_data(user_id, 'warns', 0) + 1
             set_user_data(user_id, 'warns', current_warns)
@@ -518,7 +520,8 @@ async def on_message(message: discord.Message):
             
             if current_warns >= 3:
                 mute_role = message.guild.get_role(ROLES["MUTE"])
-                if mute_role: await message.author.add_roles(mute_role)
+                if mute_role: 
+                    await message.author.add_roles(mute_role)
                 
             return  
 
